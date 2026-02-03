@@ -1,0 +1,53 @@
+# R and RStudio files
+.Rhistory
+.RData
+.Rproj.user
+*.Rproj.user
+
+# RStudio temporary files
+.Rproj.user/
+*.Rproj.user/
+
+# Output files (can regenerate)
+output/
+plots/
+results/
+*.html
+*.pdf
+*.png
+*.jpg
+
+# Data files (may contain sensitive information)
+data/*.xlsx
+data/*.csv
+data/*.xls
+data/*.dta
+data/*.sav
+
+# Keep reference documentation
+!reference/
+
+# System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*~
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# R package build files
+*.tar.gz
+*.zip
+
+# Cache directories
+cache/
+*_cache/
+*_files/

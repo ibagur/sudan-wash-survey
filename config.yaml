@@ -1,0 +1,8 @@
+# Kobo API Configuration
+# IMPORTANT: This file contains credentials and should NOT be committed to version control
+
+kobo:
+  user: washclustersudan
+  password: Hydrology_2023
+  asset_id: aaEYkZBNYz6hEaNQobatCd
+  url: kf.kobotoolbox.org
