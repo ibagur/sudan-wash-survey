@@ -1,13 +1,20 @@
-# Kobo Data Retrieval - KoboconnectR Approach
-# Purpose: Download WASH survey data from KoboToolbox (household-level only)
+# Kobo Data Retrieval - Dual-Level Processing
+# Purpose: Download WASH survey data from KoboToolbox (household + container levels)
 # Date: 2026-02-05
 #
-# Output: Household-level dataset (~371 rows)
-# - English column labels (via lang = "English (en)")
-# - Multiple_select summary columns + boolean indicators (via multi_sel = "both")
-# - Container repeat groups NOT expanded (will be implemented separately)
+# Output:
+# 1. Household-level dataset (~369 rows) via Export API
+#    - English column labels (via lang = "English (en)")
+#    - Multiple_select summary columns + boolean indicators (via multi_sel = "both")
+#    - Optional: Arabic free-text columns replaced with English translations
+#               if data/wash_survey_arabic_content_final.xlsx exists
 #
-# Approach: Use KoboconnectR package wrapper for simplified data retrieval
+# 2. Container-level dataset (~882 rows) via /data.json endpoint
+#    - Expanded container_repeat groups
+#    - All household context fields included
+#    - Multiple_select processing done inline
+#
+# Approach: Dual-source strategy to get both analytical levels
 
 # Libraries -----
 library(tidyverse)
@@ -18,6 +25,7 @@ library(readxl)
 library(writexl)
 library(glue)
 library(janitor)
+library(jsonlite)  # Parse JSON from /data.json endpoint
 
 # Configuration -----
 kobo_config_path <- here("config.yaml")
@@ -98,8 +106,22 @@ message(glue("Downloaded {nrow(wash_data)} household-level submissions"))
 # Clean up temp file
 unlink(temp_file)
 
+# ==============================================================================
+# HOUSEHOLD DATA PROCESSING - Clean HH-level data first
+# ==============================================================================
+
 # Clean column names to lowercase with underscores -----
 names(wash_data) <- make_clean_names(names(wash_data))
+
+# Create index lookup for linking to container data (BEFORE removing any columns)
+# Note: make_clean_names converts "_id" to "id"
+if ("id" %in% names(wash_data)) {
+  index_lookup <- wash_data %>%
+    select(index, kobo_id = id)
+  message(glue("Created index lookup: {nrow(index_lookup)} mappings"))
+} else {
+  stop("id column not found - cannot create index lookup for container data")
+}
 
 # Load survey definitions for value mapping -----
 choices_def <- read_excel(mapping_file_path, sheet = "choices")
@@ -146,6 +168,93 @@ if (length(summary_cols) > 0) {
     }))
 }
 
+# Process binary → multi-select pairs -----
+# Convert "No" answers in binary questions to unified multi-select options
+
+# Define all binary → multi-select pairs
+# Note: trigger_value uses English labels (after value mapping at line 135-136)
+binary_multiselect_pairs <- tribble(
+  ~binary_col, ~multiselect_col, ~trigger_value, ~fill_value, ~boolean_suffix,
+  "hh_ws_1_2_1_does_your_household_have_problems_related_to_access_to_water_if_yes_which_ones", "if_yes_follow_with_the_list", "Yes", "No", "no",
+  "hh_s_2_1_2_do_you_have_problems_related_to_sanitation_facilities_latrines_toilets_if_yes_which_ones", "if_yes_select_multiple", "Yes", "No", "no",
+  "hh_s_2_6_has_anyone_in_your_household_observed_open_defecation_in_the_area", "hh_s_2_6_1_if_yes_a_please_specify_who_was_observed_practicing_open_defecation", "Yes", "No", "no",
+  "hh_s_2_6_has_anyone_in_your_household_observed_open_defecation_in_the_area", "hh_s_2_6_1_1_if_yes_b_when_was_open_defecation_most_often_observed", "Yes", "No", "no",
+  "hh_h_4_1_does_your_household_have_problems_related_to_hygiene_items_soap_feminine_hygiene_products_baby_diapers_toothpaste_brush_if_yes_which_ones", "hh_h_4_1_1_if_applicable_how_does_your_household_adapt_to_issues_related_to_hygiene_items", "Yes", "No", "no",
+  "hh_h_4_2_2_do_you_have_enough_soap_at_household_for_all_purposes", "hh_h_4_3_1_if_applicable_please_tell_me_the_main_reason_why_your_household_does_not_have_soap", "No", "Yes", "yes"
+)
+
+# Process each pair
+for (i in seq_len(nrow(binary_multiselect_pairs))) {
+  pair <- binary_multiselect_pairs[i, ]
+
+  binary_col <- pair$binary_col
+  multiselect_col <- pair$multiselect_col
+  trigger_value <- pair$trigger_value
+  fill_value <- pair$fill_value
+  boolean_col <- paste0(multiselect_col, "_", pair$boolean_suffix)
+
+  # Check if columns exist
+  if (binary_col %in% names(wash_data) && multiselect_col %in% names(wash_data)) {
+
+    # Fill multi-select summary with fill_value when binary != trigger
+    wash_data <- wash_data %>%
+      mutate(
+        !!multiselect_col := if_else(
+          .data[[binary_col]] != trigger_value & (is.na(.data[[multiselect_col]]) | .data[[multiselect_col]] == ""),
+          fill_value,
+          .data[[multiselect_col]]
+        )
+      )
+
+    # Create boolean indicator column
+    wash_data <- wash_data %>%
+      mutate(
+        !!boolean_col := as.integer(.data[[multiselect_col]] == fill_value)
+      )
+
+    # Relocate boolean column immediately after summary column
+    wash_data <- wash_data %>%
+      relocate(all_of(boolean_col), .after = all_of(multiselect_col))
+
+    message(glue("Processed pair: {binary_col} → {multiselect_col} (added {boolean_col})"))
+  }
+}
+
+# Process single-select fill operations -----
+# Replace generic "Yes" with specific details and fill downstream columns
+
+# Step 1 & 2: Latrine damaged question
+# Replace "Yes" with specific details (Damaged/Full/Non-functional)
+# Then fill downstream "use another latrine" question with these values
+latrine_col <- "hh_s_2_3_in_the_last_30_days_was_the_latrine_you_used_damaged_non_functional_or_full"
+specify_col <- "if_yes_then_specify"
+use_another_col <- "did_you_have_to_use_another_latrine_as_a_result"
+
+if (all(c(latrine_col, specify_col, use_another_col) %in% names(wash_data))) {
+
+  # Replace "Yes" with specific answer (Damaged/Full/Non-functional)
+  wash_data <- wash_data %>%
+    mutate(
+      !!latrine_col := if_else(
+        .data[[latrine_col]] == "Yes" & !is.na(.data[[specify_col]]),
+        .data[[specify_col]],
+        .data[[latrine_col]]
+      )
+    )
+
+  # Fill empty/NA in use_another with values from latrine_damaged
+  wash_data <- wash_data %>%
+    mutate(
+      !!use_another_col := if_else(
+        is.na(.data[[use_another_col]]),
+        .data[[latrine_col]],
+        .data[[use_another_col]]
+      )
+    )
+
+  message(glue("Processed single-select fill: {latrine_col} (Yes → {specify_col}) → {use_another_col}"))
+}
+
 # Clean string values (remove control characters, prevent Excel issues) -----
 wash_data <- wash_data %>%
   mutate(across(where(is.character), ~ {
@@ -174,7 +283,7 @@ cols_to_remove <- c(
   "gps_coordinates_precision"
 )
 
-# Move index to beginning, then remove columns 2-3 and metadata from 'id' onwards
+# Move index to beginning
 wash_data <- wash_data %>%
   relocate(index) %>%
   # Remove columns 2-3 (former positions 1-2 before index moved)
@@ -204,17 +313,264 @@ wash_data <- wash_data %>%
 
 message(glue("After filtering: {nrow(wash_data)} consented households"))
 
+# ==============================================================================
+# OPTIONAL: LOAD PRE-TRANSLATED ARABIC CONTENT
+# ==============================================================================
+# Purpose: Replace Arabic free-text columns with English translations
+# File: data/wash_survey_arabic_content_final.xlsx
+# Structure: index + 18 Arabic columns + 18 _en translation columns
+# If file missing, original Arabic content is preserved
+
+translation_file <- here("data", "wash_survey_arabic_content_final.xlsx")
+arabic_translated <- FALSE
+
+if (file.exists(translation_file)) {
+
+  message("\nLoading pre-translated Arabic content...")
+
+  # Load translation file
+  translations <- read_excel(translation_file)
+  message(glue("  Loaded: {nrow(translations)} rows × {ncol(translations)} columns"))
+
+  # Clean column names to match wash_data (same process as line 112)
+  names(translations) <- make_clean_names(names(translations))
+
+  # Define Arabic column patterns (same as line 418-423)
+  arabic_patterns <- c(
+    "^if_other",
+    "^if_others",
+    "^comments",
+    "^hh_fc_7_1_is_there_anything_else"
+  )
+
+  # Identify _en translation columns
+  en_cols <- names(translations) %>%
+    keep(~ str_detect(.x, paste(arabic_patterns, collapse = "|")) &
+           str_ends(.x, "_en"))
+
+  message(glue("  Found {length(en_cols)} translated columns"))
+
+  # Select only index + _en columns, then remove _en suffix
+  translations_clean <- translations %>%
+    select(index, all_of(en_cols)) %>%
+    rename_with(~ str_remove(.x, "_en$"), ends_with("_en"))
+
+  # Validate column alignment with wash_data
+  arabic_cols_in_wash <- names(wash_data) %>%
+    keep(~ str_detect(.x, paste(arabic_patterns, collapse = "|")))
+
+  translated_cols <- setdiff(names(translations_clean), "index")
+  missing_in_wash <- setdiff(translated_cols, arabic_cols_in_wash)
+
+  if (length(missing_in_wash) > 0) {
+    warning(glue("Translation columns not found in wash_data: {paste(missing_in_wash, collapse = ', ')}"))
+    translations_clean <- translations_clean %>% select(-any_of(missing_in_wash))
+    translated_cols <- setdiff(names(translations_clean), "index")
+  }
+
+  # Merge translations into wash_data (replace Arabic with English)
+  wash_data <- wash_data %>%
+    rows_update(translations_clean, by = "index", unmatched = "ignore")
+
+  arabic_translated <- TRUE
+  message(glue("  Replaced {length(translated_cols)} Arabic columns with English translations"))
+  message(glue("  Coverage: {nrow(translations_clean)} of {nrow(wash_data)} households\n"))
+
+} else {
+  message("Translation file not found: keeping original Arabic content\n")
+}
+
+# ==============================================================================
+# CONTAINER DATA SECTION - Extract repeat group data
+# ==============================================================================
+# Purpose: Download and expand container_repeat group (882 containers)
+# Note: Export API does not expand repeat groups, so we use /data.json endpoint
+
+message("\n=== Downloading container-level data ===")
+
+data_json_url <- glue("https://{config$kobo$url}/api/v2/assets/{config$kobo$asset_id}/data.json")
+
+container_response <- GET(
+  data_json_url,
+  authenticate(config$kobo$user, config$kobo$password, type = "basic"),
+  timeout(120)
+)
+
+stop_for_status(container_response, task = "download container data")
+
+json_text <- content(container_response, as = "text", encoding = "UTF-8")
+parsed <- fromJSON(json_text, flatten = TRUE, simplifyDataFrame = TRUE)
+wash_data_container <- as_tibble(parsed$results)
+
+message(glue("Downloaded {nrow(wash_data_container)} household records for expansion"))
+
+# Identify container repeat column(s)
+container_cols <- names(wash_data_container) %>%
+  keep(~ str_detect(.x, "container_repeat"))
+
+if (length(container_cols) == 0) {
+  stop("No container_repeat columns found in data")
+}
+
+# Expand the first container repeat column found
+container_col <- container_cols[1]
+message(glue("Expanding repeat group: {container_col}"))
+
+wash_data_container <- wash_data_container %>%
+  # Keep parent _id for linking
+  mutate(parent_kobo_id = `_id`) %>%
+  # Expand repeat group
+  unnest_longer(all_of(container_col), keep_empty = FALSE) %>%
+  unnest_wider(all_of(container_col), names_sep = "_")
+
+message(glue("Expanded to {nrow(wash_data_container)} container records"))
+
+# Clean column names: extract leaf names and standardize
+clean_names <- names(wash_data_container) %>%
+  map_chr(~ {
+    # Don't transform parent_kobo_id
+    if (.x == "parent_kobo_id") {
+      return(.x)
+    }
+    str_extract(.x, "[^/]+$") %>%
+      make_clean_names()
+  })
+
+names(wash_data_container) <- make.unique(clean_names, sep = "_")
+
+# Load survey definitions (should already be loaded from HH processing)
+if (!exists("choices_def")) {
+  choices_def <- read_excel(mapping_file_path, sheet = "choices")
+}
+
+# Process container_use (only select_multiple field we need)
+# Load choices for container_use
+container_use_choices <- choices_def %>%
+  filter(list_name == "container_use") %>%
+  select(xml_code = name, english_label = `label::English (en)`)
+
+if ("container_use" %in% names(wash_data_container)) {
+  # Convert container_use summary column: XML codes → English labels
+  wash_data_container <- wash_data_container %>%
+    mutate(
+      container_use = map_chr(container_use, function(val) {
+        if (is.na(val) || val == "") return(NA_character_)
+        codes <- str_trim(str_split(val, " ")[[1]])
+        labels <- container_use_choices$english_label[match(codes, container_use_choices$xml_code)]
+        paste(na.omit(labels), collapse = "; ")
+      })
+    )
+
+  # Create boolean indicators for container_use
+  wash_data_container <- wash_data_container %>%
+    mutate(
+      container_use_drinking = as.integer(str_detect(container_use, "Drinking")),
+      container_use_domestic = as.integer(str_detect(container_use, "Domestic"))
+    )
+
+  message("Processed container_use: created 2 boolean columns")
+} else {
+  warning("container_use column not found in container data")
+}
+
+# Map parent_kobo_id to sequential household index
+wash_data_container <- wash_data_container %>%
+  left_join(index_lookup %>% rename(parent_kobo_id = kobo_id), by = "parent_kobo_id") %>%
+  rename(parent_index = index)  # Sequential HH index (1-371)
+
+# Create sequential container index (1-867)
+wash_data_container <- wash_data_container %>%
+  mutate(index = row_number()) %>%
+  select(-parent_kobo_id)  # Clean up temporary column
+
+# Map select_one codes to English labels for container fields
+mapping <- setNames(
+  choices_def[["label::English (en)"]],
+  choices_def[["name"]]
+)
+
+# Select only required container fields
+container_fields <- c(
+  "index",                    # Container's sequential index (1-867)
+  "parent_index",             # Link to household (1-371)
+  "container_type",           # select_one
+  "container_use",            # select_multiple summary
+  "container_use_drinking",   # Boolean
+  "container_use_domestic",   # Boolean
+  "volume_liters",            # Numeric
+  "number_of_containers",     # Integer
+  "frequency_filled",         # select_one
+  "fill_level"                # select_one (will convert to numeric)
+)
+
+wash_data_container <- wash_data_container %>%
+  select(any_of(container_fields)) %>%
+  # Convert XML codes to English for select_one fields
+  mutate(across(c(any_of(c("container_type", "frequency_filled", "fill_level"))), ~ coalesce(mapping[.x], .x)))
+
+# Convert fill_level to numeric (replace character column)
+wash_data_container <- wash_data_container %>%
+  mutate(
+    fill_level = case_when(
+      str_detect(fill_level, "Full|full") ~ 1.0,
+      str_detect(fill_level, "¾|three.quarter") ~ 0.75,
+      str_detect(fill_level, "½|half") ~ 0.5,
+      str_detect(fill_level, "¼|quarter") ~ 0.25,
+      TRUE ~ NA_real_
+    )
+  )
+
+message(glue("Converted fill_level to numeric: {sum(!is.na(wash_data_container$fill_level))} non-missing values"))
+
+# Select required household fields from main HH dataset
+hh_context <- wash_data %>%
+  select(
+    parent_index = index,  # Rename for joining
+    camp_name,
+    age_of_hh_respondent,
+    gender_of_the_househld,
+    did_people_arrive_two_weeks_ago_into_tawila,
+    total_no_of_people_in_hh,
+    do_you_have_members_less_than_5_years_old,
+    do_you_have_members_with_pregnant_or_lactating_women,
+    do_you_have_members_with_child_that_is_currently_receiving_malnutrition_treatment,
+    no_of_people_with_disabilities_in_hh_optional,
+    hh_ws_1_1_what_is_the_primary_source_of_water_used_by_your_household_for_drinking,
+    hh_ws_1_1_1_what_is_the_secondary_source_of_water_used_by_your_household_for_drinking,
+    hh_ws_1_2_does_your_household_currently_have_enough_water_for_drinking_and_cooking,
+    hh_ws_1_2_1_does_your_household_currently_have_enough_water_for_other_domestic_purposes_e_g_bathing_washing_etc
+  )
+
+# Join household context to container data
+# Using inner_join to automatically filter out containers from non-consented households
+wash_data_container <- wash_data_container %>%
+  inner_join(hh_context, by = "parent_index") %>%
+  # Reorder: indices first, household context, then container fields
+  relocate(index, parent_index, camp_name)
+
+message(glue("Container data (consented households only): {nrow(wash_data_container)} rows × {ncol(wash_data_container)} columns"))
+
+# Save container outputs (Excel + RDS)
+write_xlsx(wash_data_container, here("output", "wash_survey_container_level.xlsx"))
+saveRDS(wash_data_container, here("output", "wash_survey_container_level.rds"))
+
+message(glue("Saved: output/wash_survey_container_level.xlsx"))
+message(glue("       {nrow(wash_data_container)} containers × {ncol(wash_data_container)} columns\n"))
+
 # ---- Extract Arabic Content Columns ----
 # Purpose: Separate Arabic free-text responses for translation/review
 # Columns: if_other*, if_others*, comments*, hh_fc_7_1_is_there_anything_else*
 # Output: output/wash_survey_arabic_content.xlsx
+# Note: SKIPPED if pre-translated content was already loaded
 
-# Pre-flight validation
-if (!"index" %in% names(wash_data)) {
-  stop("Expected 'index' column not found in wash_data. Data structure may have changed.")
-}
+if (!arabic_translated) {
 
-message("\nExtracting Arabic content columns...")
+  # Pre-flight validation
+  if (!"index" %in% names(wash_data)) {
+    stop("Expected 'index' column not found in wash_data. Data structure may have changed.")
+  }
+
+  message("\nExtracting Arabic content columns...")
 message(glue("   Source dataset: {nrow(wash_data)} rows × {ncol(wash_data)} columns"))
 
 # Identify Arabic content columns by pattern matching
@@ -265,7 +621,11 @@ if (length(arabic_cols) == 0) {
   )
   message(glue("   Saved: {basename(output_file)}"))
   message(glue("   Dimensions: {nrow(arabic_content)} rows × {ncol(arabic_content)} columns (index + {ncol(arabic_content) - 1} Arabic fields)\n"))
-  
+
+}
+
+} else {
+  message("\nSkipping Arabic content extraction (using pre-translated content)")
 }
 
 # ---- Save Main Outputs ----
@@ -276,6 +636,10 @@ write_xlsx(wash_data, here("output", "wash_survey_hh_level.xlsx"))
 saveRDS(wash_data, here("output", "wash_survey_hh_level.rds"))
 
 message(glue("
-Household-level: {nrow(wash_data)} rows x {ncol(wash_data)} columns
-Output saved to: {output_dir}
+=== Processing Complete ===
+Household-level: {nrow(wash_data)} rows × {ncol(wash_data)} columns
+  → output/wash_survey_hh_level.xlsx
+Container-level: {nrow(wash_data_container)} rows × {ncol(wash_data_container)} columns
+  → output/wash_survey_container_level.xlsx
+Arabic content: output/wash_survey_arabic_content.xlsx
 "))
