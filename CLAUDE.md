@@ -115,6 +115,10 @@ library(gt)            # Publication-quality tables
 library(patchwork)     # Combine ggplot2 plots
 ```
 
+## Development Environment
+
+**Language Server Protocol (LSP)**: This environment uses Serena MCP server for R and Python LSP functionality through the Model Context Protocol. Do not suggest installing `python-lsp-server`, `pylsp`, or other LSP libraries - Serena provides all necessary code intelligence features.
+
 ## Shared Resources
 
 This project is part of a larger collection of UNHCR Information Management tools. Shared utility functions are available in:
