@@ -27,6 +27,11 @@ library(glue)
 library(janitor)
 library(jsonlite)  # Parse JSON from /data.json endpoint
 
+# Color palettes Global WASH Cluster
+GWC_PALETTE_GENERAL <- c("#009999", "#333333", "#000000")
+GWC_PALETTE_COMPLEMENTARY <- c("#024e6C", "#383F48", "#8CbFbF", "#ffb340", "#e36159")
+GWC_PALETTE_WATER_SANITATION_HYGIENE <- c("#28A1d2", "#532F87", "#008d48")
+
 # Configuration -----
 kobo_config_path <- here("config.yaml")
 mapping_file_path <- here("data", "Kobo version_02-Feb-2026.xlsx")
@@ -627,6 +632,490 @@ if (length(arabic_cols) == 0) {
 } else {
   message("\nSkipping Arabic content extraction (using pre-translated content)")
 }
+
+# ==============================================================================
+# SURVEY-WEIGHTED ANALYSIS: WATER SUPPLY INDICATORS
+# ==============================================================================
+
+library(srvyr)
+message("\n=== Starting survey-weighted analysis for Water Supply indicators ===")
+
+# ---- Data Preparation for Survey Analysis ----
+
+# Convert boolean columns to numeric (handle mixed integer 0/1 and character "0"/"1")
+wash_data <- wash_data %>%
+  mutate(across(
+    c(starts_with("if_yes_follow_with_the_list_"),
+      starts_with("hh_ws_1_2_2_"),
+      starts_with("hh_ws_1_2_3_")),
+    ~ case_when(
+      is.numeric(.x) ~ as.numeric(.x),
+      .x == "1" ~ 1,
+      .x == "0" ~ 0,
+      TRUE ~ NA_real_
+    )
+  ))
+
+# Calculate post-stratification weights
+camp_pops <- tibble(
+  camp_name = c("Camp A", "Camp B", "Camp C", "Camp D"),
+  pop_n = c(20142, 21000, 12504, 42050)
+) %>%
+  mutate(pop_pct = pop_n / sum(pop_n))
+
+wash_data <- wash_data %>%
+  group_by(camp_name) %>%
+  mutate(sample_pct = n() / nrow(wash_data)) %>%
+  ungroup() %>%
+  left_join(camp_pops, by = "camp_name") %>%
+  mutate(weight = pop_pct / sample_pct)
+
+# Create pseudo-clusters for DEFF adjustment (DEFF = 2.0)
+# Clusters must be nested within strata (camps)
+wash_data <- wash_data %>%
+  group_by(camp_name) %>%
+  mutate(
+    pseudo_cluster = rep(
+      1:ceiling(n() / sqrt(2.0)),
+      length.out = n()
+    )
+  ) %>%
+  ungroup()
+
+# Create survey design object (nest=TRUE because clusters are numbered within camps)
+survey_design <- wash_data %>%
+  as_survey_design(
+    strata = camp_name,
+    ids = pseudo_cluster,
+    weights = weight,
+    nest = TRUE
+  )
+
+# Create output directories
+dir.create(here("output", "plots"), recursive = TRUE, showWarnings = FALSE)
+
+message(glue("  Survey design created: {nrow(wash_data)} households, effective n ≈ {round(nrow(wash_data) / 2.0, 1)}"))
+
+# ---- Helper Function: Standardized Water Indicator Plots ----
+
+create_water_bar_plot <- function(data, x_var, y_var, title, subtitle,
+                                  x_label = "Percentage of Households",
+                                  reference_line = NULL,
+                                  x_limits = c(0, NA),
+                                  label_position = "none") {
+  p <- ggplot(data, aes(x = {{ x_var }}, y = reorder({{ y_var }}, {{ x_var }}))) +
+    geom_col(fill = "#28A1d2", width = 0.7) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    labs(title = title, subtitle = subtitle, x = x_label, y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, if_else(label_position == "outside", 0.15, 0.1))),
+      limits = x_limits,
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  # Add percentage labels based on position
+  if (label_position == "outside") {
+    p <- p + geom_text(aes(label = sprintf("%d%%", {{ x_var }})),
+                       hjust = -0.2, size = 3.5)
+  } else if (label_position == "inside") {
+    p <- p + geom_text(aes(label = sprintf("%d%%", {{ x_var }})),
+                       hjust = 1.1, size = 3.5, color = "white", fontface = "bold")
+  }
+
+  if (!is.null(reference_line)) {
+    p <- p + geom_vline(xintercept = reference_line,
+                       linetype = "dashed", color = "red", linewidth = 0.7)
+  }
+
+  return(p)
+}
+
+# ---- Indicator 1.1: Primary Drinking Water Source ----
+
+indicator_1.1 <- tryCatch({
+  results_1.1 <- survey_design %>%
+    filter(!is.na(hh_ws_1_1_what_is_the_primary_source_of_water_used_by_your_household_for_drinking)) %>%
+    group_by(water_source = hh_ws_1_1_what_is_the_primary_source_of_water_used_by_your_household_for_drinking) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    arrange(desc(estimate_pct))
+
+  if (abs(sum(results_1.1$estimate_pct) - 100) > 5) {
+    warning("Indicator 1.1: Categories sum to ", round(sum(results_1.1$estimate_pct), 1), "%, expected ~100%")
+  }
+
+  plot_1.1 <- create_water_bar_plot(
+    data = results_1.1,
+    x_var = estimate_pct,
+    y_var = water_source,
+    title = "Indicator 1.1: Primary Drinking Water Source",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "water_indicator_1.1.png"),
+         plot = plot_1.1, width = 8, height = 6, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 1.1: Primary Water Source")
+  results_1.1
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 1.1: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 1.2: Water Sufficiency ----
+
+indicator_1.2 <- tryCatch({
+  results_1.2 <- survey_design %>%
+    summarise(
+      sufficient_drinking_cooking_pct = survey_mean(
+        hh_ws_1_2_does_your_household_currently_have_enough_water_for_drinking_and_cooking == "Yes",
+        vartype = "ci", na.rm = TRUE
+      ) * 100,
+      sufficient_domestic_pct = survey_mean(
+        hh_ws_1_2_1_does_your_household_currently_have_enough_water_for_other_domestic_purposes_e_g_bathing_washing_etc == "Yes",
+        vartype = "ci", na.rm = TRUE
+      ) * 100,
+      sufficient_both_pct = survey_mean(
+        hh_ws_1_2_does_your_household_currently_have_enough_water_for_drinking_and_cooking == "Yes" &
+        hh_ws_1_2_1_does_your_household_currently_have_enough_water_for_other_domestic_purposes_e_g_bathing_washing_etc == "Yes",
+        vartype = "ci", na.rm = TRUE
+      ) * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n()
+    )
+
+  # Manual reshaping for clarity
+  results_1.2_plot <- tibble(
+    measure_label = factor(
+      c("Drinking/Cooking", "Other Domestic", "Both Purposes"),
+      levels = c("Drinking/Cooking", "Other Domestic", "Both Purposes")
+    ),
+    estimate_pct = c(
+      results_1.2$sufficient_drinking_cooking_pct,
+      results_1.2$sufficient_domestic_pct,
+      results_1.2$sufficient_both_pct
+    ),
+    ci_lower_pct = c(
+      results_1.2$sufficient_drinking_cooking_pct_low,
+      results_1.2$sufficient_domestic_pct_low,
+      results_1.2$sufficient_both_pct_low
+    ),
+    ci_upper_pct = c(
+      results_1.2$sufficient_drinking_cooking_pct_upp,
+      results_1.2$sufficient_domestic_pct_upp,
+      results_1.2$sufficient_both_pct_upp
+    )
+  ) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+
+  plot_1.2 <- ggplot(results_1.2_plot, aes(x = estimate_pct, y = measure_label)) +
+    geom_col(fill = "#28A1d2", width = 0.6) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct), width = 0.3, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)), hjust = -0.2, size = 3.5) +
+    labs(
+      title = "Indicator 1.2: Water Sufficiency",
+      subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
+      x = "Percentage of Households", y = NULL
+    ) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, 100)) +
+    theme_minimal(base_size = 12)
+
+  ggsave(here("output", "plots", "water_indicator_1.2.png"),
+         plot = plot_1.2, width = 8, height = 5, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 1.2: Water Sufficiency")
+
+  results_1.2_plot %>%
+    rename(indicator_category = measure_label) %>%
+    mutate(n_unweighted = results_1.2$n_unweighted, n_effective = results_1.2$n_effective)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 1.2: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 1.3: Water Access Problems ----
+
+indicator_1.3 <- tryCatch({
+  # Include ALL problem columns including "no" (exclude only parent and "don't know")
+  problem_cols <- names(wash_data)[str_detect(names(wash_data), "^if_yes_follow_with_the_list_")] %>%
+    setdiff(c("if_yes_follow_with_the_list", "if_yes_follow_with_the_list_don_t_know"))
+
+  # Calculate % for each problem type (including "No problems")
+  problem_results <- map_dfr(problem_cols, function(col) {
+    survey_design %>%
+      summarise(
+        problem_type = col,
+        estimate_pct = survey_mean(!!sym(col) == 1, vartype = "ci", na.rm = TRUE) * 100,
+        n_unweighted = unweighted(sum(!!sym(col) == 1, na.rm = TRUE))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      problem_label = str_remove(problem_type, "if_yes_follow_with_the_list_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        # Special handling for "No" → "No problems"
+        {if_else(. == "No", "No problems", .)} %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))  # Show all categories, sorted by prevalence
+
+  plot_1.3 <- create_water_bar_plot(
+    data = problem_results,
+    x_var = estimate_pct,
+    y_var = problem_label,
+    title = "Indicator 1.3: Water Access Problems",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nAll responses shown (multi-select allows overlaps)"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "water_indicator_1.3.png"),
+         plot = plot_1.3, width = 10, height = 8, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 1.3: Water Access Problems")
+
+  problem_results %>%
+    select(indicator_category = problem_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 1.3: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 1.4: Coping Mechanisms ----
+
+indicator_1.4 <- tryCatch({
+  coping_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_ws_1_2_2_")] %>%
+    setdiff(c("hh_ws_1_2_2_if_applicable_how_does_your_household_adapt_to_lack_of_water",
+              "hh_ws_1_2_2_if_applicable_how_does_your_household_adapt_to_lack_of_water_don_t_know",
+              "hh_ws_1_2_2_if_applicable_how_does_your_household_adapt_to_lack_of_water_other_please_list"))
+
+  coping_results <- map_dfr(coping_cols, function(col) {
+    survey_design %>%
+      summarise(
+        mechanism = col,
+        estimate_pct = survey_mean(!!sym(col) == 1, vartype = "ci", na.rm = TRUE) * 100
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      mechanism_label = str_remove(mechanism, "hh_ws_1_2_2_if_applicable_how_does_your_household_adapt_to_lack_of_water_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct)) %>%
+    slice_head(n = 10)
+
+  plot_1.4 <- create_water_bar_plot(
+    data = coping_results,
+    x_var = estimate_pct,
+    y_var = mechanism_label,
+    title = "Indicator 1.4: Water-Related Coping Mechanisms (Top 10)",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "water_indicator_1.4.png"),
+         plot = plot_1.4, width = 10, height = 7, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 1.4: Coping Mechanisms")
+
+  coping_results %>%
+    select(indicator_category = mechanism_label, estimate_pct, ci_lower_pct, ci_upper_pct)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 1.4: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 1.6: Time to Fetch Water (Categorical) ----
+
+indicator_1.6 <- tryCatch({
+  fetch_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_ws_1_2_3_")] %>%
+    setdiff(c("hh_ws_1_2_3_how_long_does_it_take_to_go_to_your_main_water_source_fetch_water_and_return_including_queuing_at_the_water_source",
+              "hh_ws_1_2_3_how_long_does_it_take_to_go_to_your_main_water_source_fetch_water_and_return_including_queuing_at_the_water_source_don_t_know"))
+
+  fetch_results <- map_dfr(fetch_cols, function(col) {
+    survey_design %>%
+      summarise(
+        time_category = col,
+        estimate_pct = survey_mean(!!sym(col) == 1, vartype = "ci", na.rm = TRUE) * 100
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      category_order = case_when(
+        str_detect(time_category, "on_premises") ~ 1,
+        str_detect(time_category, "delivered") ~ 2,
+        str_detect(time_category, "less_than_5") ~ 3,
+        str_detect(time_category, "between_5_and_15") ~ 4,
+        str_detect(time_category, "between_16_and_30") ~ 5,
+        str_detect(time_category, "more_than_31") ~ 6
+      ),
+      category_label = case_when(
+        category_order == 1 ~ "On premises",
+        category_order == 2 ~ "Delivered",
+        category_order == 3 ~ "<5 minutes",
+        category_order == 4 ~ "5-15 minutes",
+        category_order == 5 ~ "16-30 minutes",
+        category_order == 6 ~ ">31 minutes"
+      ),
+      exceeds_sphere = category_order == 6
+    ) %>%
+    arrange(category_order)
+
+  if (abs(sum(fetch_results$estimate_pct) - 100) > 5) {
+    warning("Indicator 1.6: Categories sum to ", round(sum(fetch_results$estimate_pct), 1), "%, expected ~100%")
+  }
+
+  plot_1.6 <- ggplot(fetch_results, aes(x = estimate_pct, y = "Fetch Time",
+                                        fill = category_label)) +
+    geom_col(position = "stack") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              position = position_stack(vjust = 0.5),
+              color = "white", fontface = "bold", size = 3.5) +
+    scale_fill_manual(
+      values = c("#004d99", "#0066cc", "#3399ff", "#66b3ff", "#99ccff", "#ff6666"),
+      name = "Time Category"
+    ) +
+    labs(
+      title = "Indicator 1.6: Time to Fetch Water (Round Trip)",
+      subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
+      x = "Percentage of Households",
+      y = NULL,
+      caption = "Red shading: Exceeds Sphere Standard (>30 minutes)"
+    ) +
+    scale_x_continuous(expand = c(0, 0)) +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "right")
+
+  ggsave(here("output", "plots", "water_indicator_1.6.png"),
+         plot = plot_1.6, width = 10, height = 4, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 1.6: Fetch Time Categories")
+
+  fetch_results %>%
+    select(indicator_category = category_label, estimate_pct, ci_lower_pct, ci_upper_pct)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 1.6: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 1.9: FRC Levels ----
+
+indicator_1.9 <- tryCatch({
+  results_1.9 <- survey_design %>%
+    mutate(
+      frc_clean = case_when(
+        str_detect(hh_wq_1_3_2_frc_test_result, "^0$|0\\.0") ~ "0.0 mg/l",
+        str_detect(hh_wq_1_3_2_frc_test_result, "Below 0\\.2") ~ "Below 0.2 mg/l",
+        str_detect(hh_wq_1_3_2_frc_test_result, "0\\.2.*0[,\\.]5") ~ "0.2-0.5 mg/l (TARGET)",
+        str_detect(hh_wq_1_3_2_frc_test_result, "0\\.5.*1\\.0") ~ "0.5-1.0 mg/l",
+        str_detect(hh_wq_1_3_2_frc_test_result, "More than|>1") ~ ">1.0 mg/l",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    filter(!is.na(frc_clean)) %>%
+    group_by(frc_clean) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      frc_order = case_when(
+        frc_clean == "0.0 mg/l" ~ 1,
+        frc_clean == "Below 0.2 mg/l" ~ 2,
+        frc_clean == "0.2-0.5 mg/l (TARGET)" ~ 3,
+        frc_clean == "0.5-1.0 mg/l" ~ 4,
+        frc_clean == ">1.0 mg/l" ~ 5
+      )
+    ) %>%
+    arrange(frc_order) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      in_target = str_detect(frc_clean, "TARGET"),
+      fill_color = if_else(in_target, "#28A1d2", "#8CbFbF")
+    )
+
+  pct_in_target <- results_1.9 %>% filter(in_target) %>% pull(estimate_pct)
+
+  plot_1.9 <- ggplot(results_1.9, aes(x = estimate_pct, y = "FRC Level",
+                                      fill = fill_color)) +
+    geom_col(position = "stack", color = "white", linewidth = 1.5) +
+    geom_text(aes(label = sprintf("%s\n%d%%", frc_clean, estimate_pct)),
+              position = position_stack(vjust = 0.5),
+              color = "white", fontface = "bold", size = 3) +
+    scale_fill_identity() +
+    labs(
+      title = "Indicator 1.9: Free Residual Chlorine (FRC) Levels",
+      subtitle = glue("Overall Tawila-wide estimate (n={sum(results_1.9$n_unweighted)} households tested)\nTarget range (0.2-0.5 mg/l): {round(pct_in_target)}%"),
+      x = "Percentage of Households",
+      y = NULL,
+      caption = "Dark blue: Sphere Standard target range (0.2-0.5 mg/l)"
+    ) +
+    scale_x_continuous(expand = c(0, 0)) +
+    theme_minimal(base_size = 12)
+
+  ggsave(here("output", "plots", "water_indicator_1.9.png"),
+         plot = plot_1.9, width = 10, height = 4, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 1.9: FRC Levels")
+
+  results_1.9 %>%
+    select(indicator_category = frc_clean, estimate_pct, ci_lower_pct, ci_upper_pct,
+           n_unweighted, n_effective)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 1.9: ", e$message)
+  return(NULL)
+})
+
+# ---- Export Results to Excel ----
+
+message("\n=== Exporting results to Excel ===")
+
+indicator_sheets <- list(
+  "1.1 Water Source" = indicator_1.1,
+  "1.2 Water Sufficiency" = indicator_1.2,
+  "1.3 Access Problems" = indicator_1.3,
+  "1.4 Coping Mechanisms" = indicator_1.4,
+  "1.6 Fetch Time" = indicator_1.6,
+  "1.9 FRC Levels" = indicator_1.9
+)
+
+indicator_sheets <- indicator_sheets %>% discard(is.null)
+
+output_file <- here("output", "wash_survey_water_indicators.xlsx")
+write_xlsx(indicator_sheets, path = output_file)
+
+message(glue("  Saved: {basename(output_file)} ({length(indicator_sheets)} sheets)"))
+message(glue("  Plots: output/plots/water_indicator_*.png ({length(indicator_sheets)} files)\n"))
 
 # ---- Save Main Outputs ----
 output_dir <- here("output")
