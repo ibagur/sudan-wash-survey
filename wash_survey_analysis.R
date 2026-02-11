@@ -48,7 +48,7 @@ export_response <- POST(
   body = list(
     type = "xls",
     lang = "English (en)",
-    fields_from_all_versions = FALSE,
+    fields_from_all_versions = TRUE,
     hierarchy_in_labels = FALSE,
     group_sep = "/",
     multiple_select = "both",
@@ -700,11 +700,12 @@ message(glue("  Survey design created: {nrow(wash_data)} households, effective n
 
 create_water_bar_plot <- function(data, x_var, y_var, title, subtitle,
                                   x_label = "Percentage of Households",
+                                  fill_color = "#28A1d2",
                                   reference_line = NULL,
                                   x_limits = c(0, NA),
                                   label_position = "none") {
   p <- ggplot(data, aes(x = {{ x_var }}, y = reorder({{ y_var }}, {{ x_var }}))) +
-    geom_col(fill = "#28A1d2", width = 0.7) +
+    geom_col(fill = fill_color, width = 0.7) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     labs(title = title, subtitle = subtitle, x = x_label, y = NULL) +
@@ -859,12 +860,13 @@ indicator_1.3 <- tryCatch({
     setdiff(c("if_yes_follow_with_the_list", "if_yes_follow_with_the_list_don_t_know"))
 
   # Calculate % for each problem type (including "No problems")
+  # Note: coalesce(col, 0) treats NA as 0, ensuring all 369 HH in denominator
   problem_results <- map_dfr(problem_cols, function(col) {
     survey_design %>%
       summarise(
         problem_type = col,
-        estimate_pct = survey_mean(!!sym(col) == 1, vartype = "ci", na.rm = TRUE) * 100,
-        n_unweighted = unweighted(sum(!!sym(col) == 1, na.rm = TRUE))
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
       ) %>%
       rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
   }) %>%
@@ -909,11 +911,12 @@ indicator_1.4 <- tryCatch({
               "hh_ws_1_2_2_if_applicable_how_does_your_household_adapt_to_lack_of_water_don_t_know",
               "hh_ws_1_2_2_if_applicable_how_does_your_household_adapt_to_lack_of_water_other_please_list"))
 
+  # Note: coalesce(col, 0) treats NA as 0, ensuring all 369 HH in denominator
   coping_results <- map_dfr(coping_cols, function(col) {
     survey_design %>%
       summarise(
         mechanism = col,
-        estimate_pct = survey_mean(!!sym(col) == 1, vartype = "ci", na.rm = TRUE) * 100
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100
       ) %>%
       rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
   }) %>%
@@ -1116,6 +1119,1262 @@ write_xlsx(indicator_sheets, path = output_file)
 
 message(glue("  Saved: {basename(output_file)} ({length(indicator_sheets)} sheets)"))
 message(glue("  Plots: output/plots/water_indicator_*.png ({length(indicator_sheets)} files)\n"))
+
+# ==============================================================================
+# SANITATION INDICATORS (2.1-3.0) - 10 INDICATORS
+# ==============================================================================
+
+message("\n=== Processing Sanitation Indicators ===\n")
+
+# ---- Data Preparation for Sanitation Analysis ----
+
+# Convert sanitation boolean columns to numeric
+# Only convert columns that actually contain 0/1 values (boolean indicators),
+# not parent select_one text columns (Yes/No, Never visible, etc.)
+wash_data <- wash_data %>%
+  mutate(across(
+    c(starts_with("hh_s_"),
+      starts_with("if_yes_select_multiple_"),
+      starts_with("hh_swm_")) &
+      where(~ is.numeric(.x) || (is.character(.x) && all(na.omit(.x) %in% c("0", "1")))),
+    ~ as.numeric(.x)
+  ))
+
+# Recreate survey design with updated data
+survey_design <- wash_data %>%
+  as_survey_design(
+    strata = camp_name,
+    ids = pseudo_cluster,
+    weights = weight,
+    nest = TRUE
+  )
+
+# ---- Helper Function: Standardized Sanitation Indicator Plots ----
+
+create_sanitation_bar_plot <- function(data, x_var, y_var, title, subtitle,
+                                       x_label = "Percentage of Households",
+                                       fill_color = "#008d48",
+                                       reference_line = NULL,
+                                       x_limits = c(0, NA),
+                                       label_position = "none") {
+  p <- ggplot(data, aes(x = {{ x_var }}, y = reorder({{ y_var }}, {{ x_var }}))) +
+    geom_col(fill = fill_color, width = 0.7) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    labs(title = title, subtitle = subtitle, x = x_label, y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, if_else(label_position == "outside", 0.15, 0.1))),
+      limits = x_limits,
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  if (label_position == "outside") {
+    p <- p + geom_text(aes(label = sprintf("%d%%", {{ x_var }})),
+                       hjust = -0.2, size = 3.5)
+  } else if (label_position == "inside") {
+    p <- p + geom_text(aes(label = sprintf("%d%%", {{ x_var }})),
+                       hjust = 1.1, size = 3.5, color = "white", fontface = "bold")
+  }
+
+  if (!is.null(reference_line)) {
+    p <- p + geom_vline(xintercept = reference_line,
+                       linetype = "dashed", color = "red", linewidth = 0.7)
+  }
+
+  return(p)
+}
+
+# ---- Indicator 2.1: Sanitation Facility Type ----
+
+indicator_2.1 <- tryCatch({
+
+  facility_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_s_2_1_what_kind_of_sanitation_facility_latrine_toilet_does_your_household_usually_use_")] %>%
+    setdiff(c("hh_s_2_1_what_kind_of_sanitation_facility_latrine_toilet_does_your_household_usually_use",
+              "hh_s_2_1_what_kind_of_sanitation_facility_latrine_toilet_does_your_household_usually_use_dont_know",
+              "hh_s_2_1_what_kind_of_sanitation_facility_latrine_toilet_does_your_household_usually_use_other_specify"))
+
+  facility_results <- map_dfr(facility_cols, function(col) {
+    survey_design %>%
+      summarise(
+        facility_type = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      facility_label = str_remove(facility_type, "hh_s_2_1_what_kind_of_sanitation_facility_latrine_toilet_does_your_household_usually_use_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_2.1 <- create_sanitation_bar_plot(
+    data = facility_results,
+    x_var = estimate_pct,
+    y_var = facility_label,
+    title = "Indicator 2.1: Sanitation Facility Type",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.1.png"),
+         plot = plot_2.1, width = 10, height = 8, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.1: Sanitation Facility Type")
+
+  facility_results %>%
+    select(facility_type = facility_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.1: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 2.2: Sanitation Facility Sharing ----
+
+indicator_2.2 <- tryCatch({
+
+  sharing_data <- wash_data %>%
+    mutate(
+      sharing_response = hh_s_2_1_1_if_applicable_do_you_share_this_sanitation_facility_with_other_households_if_yes_how_many_households_use_this_sanitation_facility_latrine_toilet,
+      sharing_count = as.numeric(if_yes_number_of_hh),
+      sharing_category = case_when(
+        sharing_response == "No" | sharing_count == 1 ~ "No sharing (private)",
+        sharing_count >= 2 & sharing_count <= 5 ~ "2-5 households",
+        sharing_count >= 6 & sharing_count <= 10 ~ "6-10 households",
+        sharing_count >= 11 & sharing_count <= 20 ~ "11-20 households",
+        sharing_count > 20 ~ ">20 households",
+        TRUE ~ NA_character_
+      )
+    )
+
+  survey_design_sharing <- sharing_data %>%
+    as_survey_design(
+      strata = camp_name,
+      ids = pseudo_cluster,
+      weights = weight,
+      nest = TRUE
+    )
+
+  results_2.2 <- survey_design_sharing %>%
+    group_by(sharing_category) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(sharing_category)) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(sharing_category = factor(sharing_category, levels = c("No sharing (private)", "2-5 households", "6-10 households", "11-20 households", ">20 households"))) %>%
+    arrange(sharing_category)
+
+  plot_2.2 <- ggplot(results_2.2, aes(x = estimate_pct, y = sharing_category)) +
+    geom_col(fill = "#008d48", width = 0.7) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              hjust = -0.2, size = 3.5) +
+    labs(title = "Indicator 2.2: Sanitation Facility Sharing",
+         subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nSphere standard: max 1 toilet per 20 people"),
+         x = "Percentage of Households",
+         y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.2.png"),
+         plot = plot_2.2, width = 10, height = 4, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.2: Sanitation Facility Sharing")
+
+  results_2.2 %>%
+    select(sharing_category, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.2: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 2.3: Sanitation Problems ----
+
+indicator_2.3 <- tryCatch({
+
+  problem_cols <- names(wash_data)[str_detect(names(wash_data), "^if_yes_select_multiple_")] %>%
+    setdiff(c("if_yes_select_multiple", "if_yes_select_multiple_dont_know", "if_yes_select_multiple_other_specify"))
+
+  problem_results <- map_dfr(problem_cols, function(col) {
+    survey_design %>%
+      summarise(
+        problem_type = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      problem_label = str_remove(problem_type, "if_yes_select_multiple_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        {if_else(. == "No", "No problems", .)} %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_2.3 <- create_sanitation_bar_plot(
+    data = problem_results,
+    x_var = estimate_pct,
+    y_var = problem_label,
+    title = "Indicator 2.3: Sanitation Problems",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nAll responses shown - percentages may sum >100%"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.3.png"),
+         plot = plot_2.3, width = 10, height = 8, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.3: Sanitation Problems")
+
+  problem_results %>%
+    select(problem_type = problem_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.3: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 2.4: Sanitation Coping Mechanisms ----
+
+indicator_2.4 <- tryCatch({
+
+  coping_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_s_2_1_3_if_applicable_how_do_you_adapt_to_issues_related_to_sanitation_facilities_latrines_toilets_")] %>%
+    setdiff(c("hh_s_2_1_3_if_applicable_how_do_you_adapt_to_issues_related_to_sanitation_facilities_latrines_toilets",
+              "hh_s_2_1_3_if_applicable_how_do_you_adapt_to_issues_related_to_sanitation_facilities_latrines_toilets_dont_know",
+              "hh_s_2_1_3_if_applicable_how_do_you_adapt_to_issues_related_to_sanitation_facilities_latrines_toilets_other_specify"))
+
+  coping_results <- map_dfr(coping_cols, function(col) {
+    survey_design %>%
+      summarise(
+        coping_mechanism = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      coping_label = str_remove(coping_mechanism, "hh_s_2_1_3_if_applicable_how_do_you_adapt_to_issues_related_to_sanitation_facilities_latrines_toilets_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_2.4 <- create_sanitation_bar_plot(
+    data = coping_results,
+    x_var = estimate_pct,
+    y_var = coping_label,
+    title = "Indicator 2.4: Sanitation Coping Mechanisms",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.4.png"),
+         plot = plot_2.4, width = 10, height = 8, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.4: Sanitation Coping Mechanisms")
+
+  coping_results %>%
+    select(coping_mechanism = coping_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.4: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 2.5: Feeling Unsafe at Sanitation Facilities ----
+
+indicator_2.5 <- tryCatch({
+
+  # Check if source field has any non-NA values
+  source_field <- survey_design$variables$hh_s_2_5_do_you_feel_unsafe_at_the_sanitation_facilities_you_use_most_often_because_you_fear_being_harmed_or_assaulted_by_someone
+  if (all(is.na(source_field))) {
+    message("  [NO DATA] Indicator 2.5: All responses are NA - field may not exist in this form version")
+    return(NULL)
+  }
+
+  results_2.5 <- survey_design %>%
+    group_by(gender = gender_of_the_househld) %>%
+    summarise(
+      unsafe_pct = survey_mean(hh_s_2_5_do_you_feel_unsafe_at_the_sanitation_facilities_you_use_most_often_because_you_fear_being_harmed_or_assaulted_by_someone == "Yes", vartype = "ci", na.rm = TRUE) * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(gender)) %>%
+    rename(ci_lower_pct = unsafe_pct_low, ci_upper_pct = unsafe_pct_upp) %>%
+    mutate(across(c(unsafe_pct, ci_lower_pct, ci_upper_pct), round))
+
+  plot_2.5 <- ggplot(results_2.5, aes(x = gender, y = unsafe_pct, fill = gender)) +
+    geom_col(width = 0.6) +
+    geom_errorbar(aes(ymin = ci_lower_pct, ymax = ci_upper_pct),
+                  width = 0.2, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", unsafe_pct)),
+              vjust = -0.5, size = 4) +
+    scale_fill_manual(values = c("Female" = "#008d48", "Male" = "#5bb5a2")) +
+    labs(title = "Indicator 2.5: Feeling Unsafe at Sanitation Facilities",
+         subtitle = glue("By head of household gender (n={nrow(wash_data)} households)"),
+         x = "Head of Household Gender",
+         y = "Percentage Reporting Feeling Unsafe") +
+    scale_y_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position = "none",
+      axis.text = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.5.png"),
+         plot = plot_2.5, width = 8, height = 6, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.5: Feeling Unsafe at Sanitation Facilities")
+
+  results_2.5 %>%
+    select(gender, estimate_pct = unsafe_pct, ci_lower_pct, ci_upper_pct, n_unweighted, n_effective)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.5: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 2.6: Observed Open Defecation ----
+
+# 2.6a: Overall observation prevalence
+indicator_2.6a <- tryCatch({
+
+  # Check if source field has any non-NA values
+  source_field <- survey_design$variables$hh_s_2_6_has_anyone_in_your_household_observed_open_defecation_in_the_area
+  if (all(is.na(source_field))) {
+    message("  [NO DATA] Indicator 2.6a: All responses are NA - field may not exist in this form version")
+    return(NULL)
+  }
+
+  results_2.6a <- survey_design %>%
+    group_by(observed = hh_s_2_6_has_anyone_in_your_household_observed_open_defecation_in_the_area) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(observed)) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+
+  plot_2.6a <- ggplot(results_2.6a, aes(x = estimate_pct, y = observed)) +
+    geom_col(fill = "#008d48", width = 0.7) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              hjust = -0.2, size = 4) +
+    labs(title = "Indicator 2.6a: Observed Open Defecation",
+         subtitle = glue("Overall prevalence (n={nrow(wash_data)} households)"),
+         x = "Percentage of Households",
+         y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.6a.png"),
+         plot = plot_2.6a, width = 8, height = 3, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.6a: Observed Open Defecation - Overall")
+
+  results_2.6a %>%
+    select(observation_response = observed, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.6a: ", e$message)
+  return(NULL)
+})
+
+# 2.6b: Who was observed
+indicator_2.6b <- tryCatch({
+
+  who_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_s_2_6_1_if_yes_a_please_specify_who_was_observed_practicing_open_defecation_")]
+
+  who_results <- map_dfr(who_cols, function(col) {
+    survey_design %>%
+      summarise(
+        age_group = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      age_label = str_remove(age_group, "hh_s_2_6_1_if_yes_a_please_specify_who_was_observed_practicing_open_defecation_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        {if_else(. == "No", "None observed", .)} %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_2.6b <- create_sanitation_bar_plot(
+    data = who_results,
+    x_var = estimate_pct,
+    y_var = age_label,
+    title = "Indicator 2.6b: Who Was Observed Practicing Open Defecation",
+    subtitle = glue("By age group (n={nrow(wash_data)} households)\nAll responses shown - percentages may sum >100%"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.6b.png"),
+         plot = plot_2.6b, width = 10, height = 6, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.6b: Observed Open Defecation - Who")
+
+  who_results %>%
+    select(age_group = age_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.6b: ", e$message)
+  return(NULL)
+})
+
+# 2.6c: When observed
+indicator_2.6c <- tryCatch({
+
+  when_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_s_2_6_1_1_if_yes_b_when_was_open_defecation_most_often_observed_")]
+
+  when_results <- map_dfr(when_cols, function(col) {
+    survey_design %>%
+      summarise(
+        time_period = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      time_label = str_remove(time_period, "hh_s_2_6_1_1_if_yes_b_when_was_open_defecation_most_often_observed_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        {if_else(. == "No", "None observed", .)} %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_2.6c <- create_sanitation_bar_plot(
+    data = when_results,
+    x_var = estimate_pct,
+    y_var = time_label,
+    title = "Indicator 2.6c: When Was Open Defecation Observed",
+    subtitle = glue("By time of day (n={nrow(wash_data)} households)\nAll responses shown - percentages may sum >100%"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.6c.png"),
+         plot = plot_2.6c, width = 10, height = 6, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.6c: Observed Open Defecation - When")
+
+  when_results %>%
+    select(time_period = time_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.6c: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 2.7: Children <5 Defecation Practices ----
+
+indicator_2.7 <- tryCatch({
+
+  practice_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_s_2_2_where_do_children_under_5_who_are_living_in_this_household_usually_go_to_defecate_")] %>%
+    setdiff(c("hh_s_2_2_where_do_children_under_5_who_are_living_in_this_household_usually_go_to_defecate",
+              "hh_s_2_2_where_do_children_under_5_who_are_living_in_this_household_usually_go_to_defecate_don_t_know",
+              "hh_s_2_2_where_do_children_under_5_who_are_living_in_this_household_usually_go_to_defecate_other_specify"))
+
+  practice_results <- map_dfr(practice_cols, function(col) {
+    survey_design %>%
+      summarise(
+        practice_type = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      practice_label = str_remove(practice_type, "hh_s_2_2_where_do_children_under_5_who_are_living_in_this_household_usually_go_to_defecate_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_2.7 <- create_sanitation_bar_plot(
+    data = practice_results,
+    x_var = estimate_pct,
+    y_var = practice_label,
+    title = "Indicator 2.7: Children <5 Defecation Practices",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.7.png"),
+         plot = plot_2.7, width = 10, height = 6, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.7: Children <5 Defecation Practices")
+
+  practice_results %>%
+    select(practice_type = practice_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.7: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 2.8: Damaged/Non-functional Latrines ----
+
+indicator_2.8 <- tryCatch({
+
+  # Check if source field has any non-NA values
+  source_field <- survey_design$variables$hh_s_2_3_in_the_last_30_days_was_the_latrine_you_used_damaged_non_functional_or_full
+  if (all(is.na(source_field))) {
+    message("  [NO DATA] Indicator 2.8: All responses are NA - field may not exist in this form version")
+    return(NULL)
+  }
+
+  results_2.8 <- survey_design %>%
+    group_by(status = hh_s_2_3_in_the_last_30_days_was_the_latrine_you_used_damaged_non_functional_or_full) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(status)) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+
+  plot_2.8 <- ggplot(results_2.8, aes(x = estimate_pct, y = status)) +
+    geom_col(fill = "#008d48", width = 0.7) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              hjust = -0.2, size = 4) +
+    labs(title = "Indicator 2.8: Damaged/Non-functional Latrines",
+         subtitle = glue("Last 30 days (n={nrow(wash_data)} households)"),
+         x = "Percentage of Households",
+         y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.8.png"),
+         plot = plot_2.8, width = 8, height = 3, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.8: Damaged/Non-functional Latrines")
+
+  results_2.8 %>%
+    select(latrine_status = status, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.8: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 2.9: Visible Human Feces ----
+
+indicator_2.9 <- tryCatch({
+
+  # Check if source field has any non-NA values
+  source_field <- survey_design$variables$hh_s_2_9_was_there_visible_traces_of_human_faeces_in_the_vicinity_10_meters_or_less_of_your_accommodation_in_the_last_30_days
+  if (all(is.na(source_field))) {
+    message("  [NO DATA] Indicator 2.9: All responses are NA - field may not exist in this form version")
+    return(NULL)
+  }
+
+  # Response categories: "Never visible", "Sometime visible", "Frequently visible", "Don't know"
+  results_2.9 <- survey_design %>%
+    group_by(frequency = hh_s_2_9_was_there_visible_traces_of_human_faeces_in_the_vicinity_10_meters_or_less_of_your_accommodation_in_the_last_30_days) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(frequency)) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+
+  # Order categories logically
+  category_order <- c("Never visible", "Sometime visible", "Frequently visible", "Don't know")
+  results_2.9 <- results_2.9 %>%
+    mutate(frequency = factor(frequency, levels = rev(category_order)))
+
+  # Calculate combined "any visible" percentage for subtitle
+  any_visible_pct <- results_2.9 %>%
+    filter(frequency %in% c("Sometime visible", "Frequently visible")) %>%
+    summarise(pct = sum(estimate_pct)) %>%
+    pull(pct)
+
+  plot_2.9 <- ggplot(results_2.9, aes(x = estimate_pct, y = frequency)) +
+    geom_col(fill = "#008d48", width = 0.7) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              hjust = -0.2, size = 4) +
+    labs(title = "Indicator 2.9: Visible Human Feces Near Accommodation",
+         subtitle = glue("Last 30 days (n={nrow(wash_data)} households) | Any visible: {any_visible_pct}%"),
+         x = "Percentage of Households",
+         y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "sanitation_indicator_2.9.png"),
+         plot = plot_2.9, width = 8, height = 4, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 2.9: Visible Human Feces")
+
+  results_2.9 %>%
+    mutate(frequency = as.character(frequency)) %>%
+    select(frequency, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 2.9: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 3.0: Solid Waste Disposal ----
+
+indicator_3.0 <- tryCatch({
+
+  waste_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_swm_3_1_what_is_the_most_common_way_your_household_disposes_of_garbage_")] %>%
+    setdiff(c("hh_swm_3_1_what_is_the_most_common_way_your_household_disposes_of_garbage",
+              "hh_swm_3_1_what_is_the_most_common_way_your_household_disposes_of_garbage_dont_know",
+              "hh_swm_3_1_what_is_the_most_common_way_your_household_disposes_of_garbage_other_specify"))
+
+  waste_results <- map_dfr(waste_cols, function(col) {
+    survey_design %>%
+      summarise(
+        disposal_method = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      disposal_label = str_remove(disposal_method, "hh_swm_3_1_what_is_the_most_common_way_your_household_disposes_of_garbage_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_3.0 <- create_sanitation_bar_plot(
+    data = waste_results,
+    x_var = estimate_pct,
+    y_var = disposal_label,
+    title = "Indicator 3.0: Solid Waste Disposal Methods",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "sanitation_indicator_3.0.png"),
+         plot = plot_3.0, width = 10, height = 6, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 3.0: Solid Waste Disposal")
+
+  waste_results %>%
+    select(disposal_method = disposal_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 3.0: ", e$message)
+  return(NULL)
+})
+
+# ---- Export Sanitation Results to Excel ----
+
+message("\n=== Exporting Sanitation results to Excel ===")
+
+sanitation_sheets <- list(
+  "2.1 Facility Type" = indicator_2.1,
+  "2.2 Facility Sharing" = indicator_2.2,
+  "2.3 Problems" = indicator_2.3,
+  "2.4 Coping Mechanisms" = indicator_2.4,
+  "2.5 Feeling Unsafe" = indicator_2.5,
+  "2.6a OD Observed" = indicator_2.6a,
+  "2.6b OD Who" = indicator_2.6b,
+  "2.6c OD When" = indicator_2.6c,
+  "2.7 Children U5 Practice" = indicator_2.7,
+  "2.8 Damaged Latrines" = indicator_2.8,
+  "2.9 Visible Feces" = indicator_2.9,
+  "3.0 Waste Disposal" = indicator_3.0
+)
+
+sanitation_sheets <- sanitation_sheets %>% discard(is.null)
+
+output_file_san <- here("output", "wash_survey_sanitation_indicators.xlsx")
+write_xlsx(sanitation_sheets, path = output_file_san)
+
+message(glue("  Saved: {basename(output_file_san)} ({length(sanitation_sheets)} sheets)"))
+message(glue("  Plots: output/plots/sanitation_indicator_*.png ({length(sanitation_sheets)} files)\n"))
+
+# ==============================================================================
+# TABLE 1: DISAGGREGATION INDICATORS (9 INDICATORS)
+# ==============================================================================
+
+message("\n=== Processing Table 1: Disaggregation Indicators ===\n")
+
+# ---- Data Cleaning: Handle Outliers in Elderly Count Fields ----
+
+wash_data <- wash_data %>%
+  mutate(
+    no_of_men_60_in_hh = if_else(
+      as.numeric(no_of_men_60_in_hh) > 4,
+      NA_character_,
+      no_of_men_60_in_hh
+    ),
+    no_of_women_60_in_hh = if_else(
+      as.numeric(no_of_women_60_in_hh) > 4,
+      NA_character_,
+      no_of_women_60_in_hh
+    )
+  )
+
+# ---- Derive Binary Indicators ----
+
+wash_data <- wash_data %>%
+  mutate(
+    # Indicator 4: Recent arrivals
+    recent_arrival_bin = if_else(
+      did_people_arrive_two_weeks_ago_into_tawila == "Yes", 1, 0
+    ),
+    
+    # Indicator 5: Children under 5
+    children_under5_bin = if_else(
+      do_you_have_members_less_than_5_years_old == "Yes", 1, 0
+    ),
+    
+    # Indicator 6: Elderly 60+ (any men OR women)
+    elderly_60plus_bin = if_else(
+      (as.numeric(no_of_men_60_in_hh) > 0) | (as.numeric(no_of_women_60_in_hh) > 0),
+      1, 0, missing = 0
+    ),
+    
+    # Indicator 7: Disabled members
+    disabled_members_bin = if_else(
+      as.numeric(no_of_people_with_disabilities_in_hh_optional) > 0, 1, 0, missing = 0
+    ),
+    
+    # Indicator 8: PLW
+    plw_bin = if_else(
+      do_you_have_members_with_pregnant_or_lactating_women == "Yes", 1, 0
+    ),
+    
+    # Indicator 9: Malnutrition treatment
+    malnutrition_treatment_bin = if_else(
+      do_you_have_members_with_child_that_is_currently_receiving_malnutrition_treatment == "Yes", 1, 0
+    )
+  )
+
+# ---- Recreate Survey Design with Updated Data ----
+
+survey_design <- wash_data %>%
+  as_survey_design(
+    strata = camp_name,
+    ids = pseudo_cluster,
+    weights = weight,
+    nest = TRUE
+  )
+
+# ---- Indicator 1: Camp Distribution ----
+
+indicator_1 <- tryCatch({
+  results_1 <- survey_design %>%
+    group_by(camp_name) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    arrange(desc(n_unweighted))
+  
+  if (abs(sum(results_1$estimate_pct) - 100) > 5) {
+    warning("Indicator 1: Categories sum to ", round(sum(results_1$estimate_pct), 1), "%, expected ~100%")
+  }
+  
+  # Custom plot without error bars (descriptive statistic, not population estimate)
+  plot_1 <- ggplot(results_1, aes(x = estimate_pct, y = reorder(camp_name, estimate_pct))) +
+    geom_col(fill = "#009999", width = 0.7) +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)), hjust = -0.2, size = 3.5) +
+    labs(
+      title = "Indicator 1: Camp Distribution",
+      subtitle = glue("n = {sum(results_1$n_unweighted)} households"),
+      x = "Percentage of Households",
+      y = NULL
+    ) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      limits = c(0, NA),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+  
+  ggsave(here("output", "plots", "disaggregation_indicator_1.png"),
+         plot = plot_1, width = 8, height = 4, dpi = 300, bg = "white")
+  
+  message("  [OK] Indicator 1: Camp Distribution")
+  results_1
+}, error = function(e) {
+  message("  [ERROR] Indicator 1: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 2: Respondent Gender ----
+
+indicator_2 <- tryCatch({
+  results_2 <- survey_design %>%
+    group_by(gender = gender_of_the_househld) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+  
+  # Filter to Female only for plot
+  plot_data <- results_2 %>% filter(gender == "Female")
+  
+  plot_2 <- create_water_bar_plot(
+    data = plot_data,
+    x_var = estimate_pct,
+    y_var = gender,
+    title = "Indicator 2: Gender of Survey Respondent",
+    subtitle = glue("Female respondents: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
+    fill_color = "#009999",
+    x_limits = c(0, 100),
+    label_position = "outside"
+  )
+  
+  ggsave(here("output", "plots", "disaggregation_indicator_2.png"),
+         plot = plot_2, width = 8, height = 3, dpi = 300, bg = "white")
+  
+  message("  [OK] Indicator 2: Respondent Gender")
+  results_2
+}, error = function(e) {
+  message("  [ERROR] Indicator 2: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 3a: Household Head Age Distribution ----
+
+indicator_3a <- tryCatch({
+  age_stats <- survey_design %>%
+    summarise(
+      mean_age = survey_mean(as.numeric(age_of_hh_respondent), vartype = "ci", na.rm = TRUE),
+      median_age = survey_median(as.numeric(age_of_hh_respondent), na.rm = TRUE),
+      n_unweighted = unweighted(sum(!is.na(age_of_hh_respondent))),
+      n_effective = n()
+    )
+  
+  plot_3a <- ggplot(wash_data %>% filter(!is.na(age_of_hh_respondent)), 
+                    aes(x = as.numeric(age_of_hh_respondent))) +
+    geom_histogram(binwidth = 5, boundary = 15, fill = "#009999", color = "white") +
+    geom_density(aes(y = after_stat(count) * 5), color = "#024e6C", linewidth = 1) +
+    geom_vline(xintercept = age_stats$median_age, linetype = "dashed", 
+               color = "#024e6C", linewidth = 0.8) +
+    labs(
+      title = "Indicator 3a: Age Distribution of Household Heads",
+      subtitle = glue("Mean: {round(age_stats$mean_age)} years (95% CI: {round(age_stats$mean_age_low)}-{round(age_stats$mean_age_upp)}); Median: {round(age_stats$median_age)} years"),
+      x = "Age (years)",
+      y = "Number of Households"
+    ) +
+    scale_x_continuous(breaks = seq(15, 90, 5), limits = c(15, 90)) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.minor = element_blank()
+    )
+  
+  ggsave(here("output", "plots", "disaggregation_indicator_3a.png"),
+         plot = plot_3a, width = 10, height = 6, dpi = 300, bg = "white")
+  
+  message("  [OK] Indicator 3a: HoH Age Distribution")
+  
+  age_stats %>%
+    mutate(across(c(mean_age, mean_age_low, mean_age_upp, median_age), round)) %>%
+    rename(
+      mean_age_ci_lower = mean_age_low,
+      mean_age_ci_upper = mean_age_upp
+    )
+}, error = function(e) {
+  message("  [ERROR] Indicator 3a: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 3b: Household Head Gender ----
+
+indicator_3b <- tryCatch({
+  results_3b <- survey_design %>%
+    group_by(gender = gender_of_the_househld) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+  
+  # Filter to Female only for plot
+  plot_data <- results_3b %>% filter(gender == "Female")
+  
+  plot_3b <- create_water_bar_plot(
+    data = plot_data,
+    x_var = estimate_pct,
+    y_var = gender,
+    title = "Indicator 3b: Gender of Household Head",
+    subtitle = glue("Female HoH: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
+    fill_color = "#009999",
+    x_limits = c(0, 100),
+    label_position = "outside"
+  )
+  
+  ggsave(here("output", "plots", "disaggregation_indicator_3b.png"),
+         plot = plot_3b, width = 8, height = 3, dpi = 300, bg = "white")
+  
+  message("  [OK] Indicator 3b: HoH Gender")
+  results_3b
+}, error = function(e) {
+  message("  [ERROR] Indicator 3b: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 4: Recent Arrivals ----
+
+indicator_4 <- tryCatch({
+  results_4 <- survey_design %>%
+    group_by(category = if_else(recent_arrival_bin == 1, "Yes", "No")) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+  
+  # Filter to Yes only for plot
+  plot_data <- results_4 %>% filter(category == "Yes")
+  
+  plot_4 <- create_water_bar_plot(
+    data = plot_data,
+    x_var = estimate_pct,
+    y_var = category,
+    title = "Indicator 4: Recent Arrivals (Within 2 Weeks)",
+    subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
+    fill_color = "#009999",
+    x_limits = c(0, 100),
+    label_position = "outside"
+  )
+  
+  ggsave(here("output", "plots", "disaggregation_indicator_4.png"),
+         plot = plot_4, width = 8, height = 3, dpi = 300, bg = "white")
+  
+  message("  [OK] Indicator 4: Recent Arrivals")
+  results_4
+}, error = function(e) {
+  message("  [ERROR] Indicator 4: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 5: Households with Children Under 5 ----
+
+indicator_5 <- tryCatch({
+  results_5 <- survey_design %>%
+    group_by(category = if_else(children_under5_bin == 1, "Yes", "No")) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+  
+  # Filter to Yes only for plot
+  plot_data <- results_5 %>% filter(category == "Yes")
+  
+  plot_5 <- create_water_bar_plot(
+    data = plot_data,
+    x_var = estimate_pct,
+    y_var = category,
+    title = "Indicator 5: Households with Children Under 5",
+    subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
+    fill_color = "#009999",
+    x_limits = c(0, 100),
+    label_position = "outside"
+  )
+  
+  ggsave(here("output", "plots", "disaggregation_indicator_5.png"),
+         plot = plot_5, width = 8, height = 3, dpi = 300, bg = "white")
+  
+  message("  [OK] Indicator 5: Children Under 5")
+  results_5
+}, error = function(e) {
+  message("  [ERROR] Indicator 5: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 6: Households with Elderly (60+) ----
+
+indicator_6 <- tryCatch({
+  results_6 <- survey_design %>%
+    group_by(category = if_else(elderly_60plus_bin == 1, "Yes", "No")) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+  
+  # Filter to Yes only for plot
+  plot_data <- results_6 %>% filter(category == "Yes")
+  
+  plot_6 <- create_water_bar_plot(
+    data = plot_data,
+    x_var = estimate_pct,
+    y_var = category,
+    title = "Indicator 6: Households with Elderly Members (60+)",
+    subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
+    fill_color = "#009999",
+    x_limits = c(0, 100),
+    label_position = "outside"
+  )
+  
+  ggsave(here("output", "plots", "disaggregation_indicator_6.png"),
+         plot = plot_6, width = 8, height = 3, dpi = 300, bg = "white")
+  
+  message("  [OK] Indicator 6: Elderly 60+")
+  results_6
+}, error = function(e) {
+  message("  [ERROR] Indicator 6: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 7: Households with Disabled Members ----
+
+indicator_7 <- tryCatch({
+  results_7 <- survey_design %>%
+    group_by(category = if_else(disabled_members_bin == 1, "Yes", "No")) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+  
+  # Filter to Yes only for plot
+  plot_data <- results_7 %>% filter(category == "Yes")
+  
+  plot_7 <- create_water_bar_plot(
+    data = plot_data,
+    x_var = estimate_pct,
+    y_var = category,
+    title = "Indicator 7: Households with Disabled Members",
+    subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
+    fill_color = "#009999",
+    x_limits = c(0, 100),
+    label_position = "outside"
+  )
+  
+  ggsave(here("output", "plots", "disaggregation_indicator_7.png"),
+         plot = plot_7, width = 8, height = 3, dpi = 300, bg = "white")
+  
+  message("  [OK] Indicator 7: Disabled Members")
+  results_7
+}, error = function(e) {
+  message("  [ERROR] Indicator 7: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 8: Households with Pregnant/Lactating Women ----
+
+indicator_8 <- tryCatch({
+  results_8 <- survey_design %>%
+    group_by(category = if_else(plw_bin == 1, "Yes", "No")) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+  
+  # Filter to Yes only for plot
+  plot_data <- results_8 %>% filter(category == "Yes")
+  
+  plot_8 <- create_water_bar_plot(
+    data = plot_data,
+    x_var = estimate_pct,
+    y_var = category,
+    title = "Indicator 8: Households with Pregnant/Lactating Women",
+    subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
+    fill_color = "#009999",
+    x_limits = c(0, 100),
+    label_position = "outside"
+  )
+  
+  ggsave(here("output", "plots", "disaggregation_indicator_8.png"),
+         plot = plot_8, width = 8, height = 3, dpi = 300, bg = "white")
+  
+  message("  [OK] Indicator 8: PLW")
+  results_8
+}, error = function(e) {
+  message("  [ERROR] Indicator 8: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 9: Households with Children Receiving Malnutrition Treatment ----
+
+indicator_9 <- tryCatch({
+  results_9 <- survey_design %>%
+    group_by(category = if_else(malnutrition_treatment_bin == 1, "Yes", "No")) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      n_effective = n(),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+  
+  # Filter to Yes only for plot
+  plot_data <- results_9 %>% filter(category == "Yes")
+  
+  plot_9 <- create_water_bar_plot(
+    data = plot_data,
+    x_var = estimate_pct,
+    y_var = category,
+    title = "Indicator 9: Households with Children Receiving Malnutrition Treatment",
+    subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
+    fill_color = "#009999",
+    x_limits = c(0, 100),
+    label_position = "outside"
+  )
+  
+  ggsave(here("output", "plots", "disaggregation_indicator_9.png"),
+         plot = plot_9, width = 8, height = 3, dpi = 300, bg = "white")
+  
+  message("  [OK] Indicator 9: Malnutrition Treatment")
+  results_9
+}, error = function(e) {
+  message("  [ERROR] Indicator 9: ", e$message)
+  return(NULL)
+})
+
+# ---- Export Disaggregation Indicators to Excel ----
+
+message("\n=== Exporting disaggregation indicators to Excel ===")
+
+disaggregation_sheets <- list(
+  "1 Camp Distribution" = indicator_1,
+  "2 Respondent Gender" = indicator_2,
+  "3a HoH Age Stats" = indicator_3a,
+  "3b HoH Gender" = indicator_3b,
+  "4 Recent Arrivals" = indicator_4,
+  "5 Children Under 5" = indicator_5,
+  "6 Elderly 60+" = indicator_6,
+  "7 Disabled Members" = indicator_7,
+  "8 PLW" = indicator_8,
+  "9 Malnutrition" = indicator_9
+)
+
+disaggregation_sheets <- disaggregation_sheets %>% discard(is.null)
+
+disagg_output_file <- here("output", "wash_survey_disaggregation_indicators.xlsx")
+write_xlsx(disaggregation_sheets, path = disagg_output_file)
+
+message(glue("  Saved: {basename(disagg_output_file)} ({length(disaggregation_sheets)} sheets)"))
+message(glue("  Plots: output/plots/disaggregation_indicator_*.png (10 files)\n"))
 
 # ---- Save Main Outputs ----
 output_dir <- here("output")
