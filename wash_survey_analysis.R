@@ -1880,6 +1880,803 @@ message(glue("  Saved: {basename(output_file_san)} ({length(sanitation_sheets)} 
 message(glue("  Plots: output/plots/sanitation_indicator_*.png ({length(sanitation_sheets)} files)\n"))
 
 # ==============================================================================
+# TABLE 2 (CONTINUED): HYGIENE INDICATORS (4.1-4.11)
+# ==============================================================================
+
+message("\n=== Processing Table 2 (continued): Hygiene Indicators ===\n")
+
+# Convert hygiene boolean columns to numeric
+# Guard with where() to only convert actual 0/1 columns (avoids destroying text columns)
+wash_data <- wash_data %>%
+  mutate(across(
+    c(starts_with("hh_h_"),
+      starts_with("if_yes_which_ones_"),
+      starts_with("during_your_last_")) &
+      where(~ is.numeric(.x) || (is.character(.x) && all(na.omit(.x) %in% c("0", "1")))),
+    ~ as.numeric(.x)
+  ))
+
+# Recreate survey design with updated data
+survey_design <- wash_data %>%
+  as_survey_design(
+    strata = camp_name,
+    ids = pseudo_cluster,
+    weights = weight,
+    nest = TRUE
+  )
+
+# ---- Helper Function: Standardized Hygiene Indicator Plots ----
+
+create_hygiene_bar_plot <- function(data, x_var, y_var, title, subtitle,
+                                    x_label = "Percentage of Households",
+                                    fill_color = "#532F87",
+                                    reference_line = NULL,
+                                    x_limits = c(0, NA),
+                                    label_position = "none") {
+  p <- ggplot(data, aes(x = {{ x_var }}, y = reorder({{ y_var }}, {{ x_var }}))) +
+    geom_col(fill = fill_color, width = 0.7) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    labs(title = title, subtitle = subtitle, x = x_label, y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, if_else(label_position == "outside", 0.15, 0.1))),
+      limits = x_limits,
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  if (label_position == "outside") {
+    p <- p + geom_text(aes(label = sprintf("%d%%", {{ x_var }})),
+                       hjust = -0.2, size = 3.5)
+  } else if (label_position == "inside") {
+    p <- p + geom_text(aes(label = sprintf("%d%%", {{ x_var }})),
+                       hjust = 1.1, size = 3.5, color = "white", fontface = "bold")
+  }
+
+  if (!is.null(reference_line)) {
+    p <- p + geom_vline(xintercept = reference_line,
+                       linetype = "dashed", color = "red", linewidth = 0.7)
+  }
+
+  return(p)
+}
+
+# ---- Indicator 4.1: Hygiene NFI Problems ----
+
+indicator_4.1 <- tryCatch({
+
+  problem_cols <- names(wash_data)[str_detect(names(wash_data), "^if_yes_which_ones_")] %>%
+    setdiff(c("if_yes_which_ones", "if_yes_which_ones_dont_know", "if_yes_which_ones_don_t_know",
+              "if_yes_which_ones_other_specify"))
+
+  problem_results <- map_dfr(problem_cols, function(col) {
+    survey_design %>%
+      summarise(
+        problem_type = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      problem_label = str_remove(problem_type, "if_yes_which_ones_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        {if_else(. == "No", "No problems", .)} %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_4.1 <- create_hygiene_bar_plot(
+    data = problem_results,
+    x_var = estimate_pct,
+    y_var = problem_label,
+    title = "Indicator 4.1: Hygiene NFI Problems",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nAll responses shown - percentages may sum >100%"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.1.png"),
+         plot = plot_4.1, width = 10, height = 8, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 4.1: Hygiene NFI Problems")
+
+  problem_results %>%
+    select(problem_type = problem_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 4.1: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 4.2: Hygiene NFI Coping Mechanisms ----
+
+indicator_4.2 <- tryCatch({
+
+  coping_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_h_4_1_1_if_applicable_how_does_your_household_adapt_to_issues_related_to_hygiene_items_")] %>%
+    setdiff(c("hh_h_4_1_1_if_applicable_how_does_your_household_adapt_to_issues_related_to_hygiene_items",
+              "hh_h_4_1_1_if_applicable_how_does_your_household_adapt_to_issues_related_to_hygiene_items_dont_know",
+              "hh_h_4_1_1_if_applicable_how_does_your_household_adapt_to_issues_related_to_hygiene_items_don_t_know",
+              "hh_h_4_1_1_if_applicable_how_does_your_household_adapt_to_issues_related_to_hygiene_items_other_specify"))
+
+  coping_results <- map_dfr(coping_cols, function(col) {
+    survey_design %>%
+      summarise(
+        coping_mechanism = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      coping_label = str_remove(coping_mechanism, "hh_h_4_1_1_if_applicable_how_does_your_household_adapt_to_issues_related_to_hygiene_items_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_4.2 <- create_hygiene_bar_plot(
+    data = coping_results,
+    x_var = estimate_pct,
+    y_var = coping_label,
+    title = "Indicator 4.2: Hygiene NFI Coping Mechanisms",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.2.png"),
+         plot = plot_4.2, width = 10, height = 8, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 4.2: Hygiene NFI Coping Mechanisms")
+
+  coping_results %>%
+    select(coping_mechanism = coping_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 4.2: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 4.3: Hygiene Spending Categories ----
+
+indicator_4.3 <- tryCatch({
+
+  spending_field <- "hh_h_4_1_1_how_much_did_your_household_spend_on_hygiene_items_soap_shampoo_sanitary_pads_diapers_and_water_containers_in_the_last_30_days"
+
+  results_4.3 <- survey_design %>%
+    group_by(spending_category = !!sym(spending_field)) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(spending_category)) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+
+  # Order by spending range (ascending)
+  results_4.3 <- results_4.3 %>%
+    mutate(
+      category_order = case_when(
+        str_detect(spending_category, "^0") ~ 1,
+        str_detect(spending_category, "10,000 SDG$|10.000") ~ 2,
+        str_detect(spending_category, "20,000|20.000") ~ 3,
+        str_detect(spending_category, "40,000|40.000") ~ 4,
+        str_detect(spending_category, "60,000|60.000") ~ 5,
+        str_detect(spending_category, "More|more|>") ~ 6,
+        TRUE ~ 7
+      ),
+      category_label = spending_category
+    ) %>%
+    arrange(category_order)
+
+  # Purple gradient for hygiene spending
+  purple_gradient <- c("#e8d5f5", "#c9a0e0", "#a56cc7", "#7b3f9e", "#532F87")
+  # Trim to number of categories
+  fill_colors <- purple_gradient[seq_len(nrow(results_4.3))]
+
+  plot_4.3 <- ggplot(results_4.3, aes(x = estimate_pct, y = "Spending",
+                                       fill = factor(category_label, levels = rev(unique(category_label))))) +
+    geom_col(position = "stack", color = "white", linewidth = 1.5) +
+    geom_text(aes(label = sprintf("%s\n%d%%", category_label, estimate_pct)),
+              position = position_stack(vjust = 0.5),
+              color = "white", fontface = "bold", size = 3) +
+    scale_fill_manual(values = setNames(rev(fill_colors), rev(unique(results_4.3$category_label))),
+                      name = "Spending Range") +
+    labs(
+      title = "Indicator 4.3: Hygiene Spending (Past 30 Days)",
+      subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nCategorical ranges in Sudanese Pounds (SDG)"),
+      x = "Percentage of Households",
+      y = NULL
+    ) +
+    scale_x_continuous(expand = c(0, 0)) +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "none")
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.3.png"),
+         plot = plot_4.3, width = 10, height = 4, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 4.3: Hygiene Spending Categories")
+
+  results_4.3 %>%
+    select(spending_category = category_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 4.3: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 4.4: SKIP (Data Gap) ----
+# Barriers to WASH NFI in market not collected as a dedicated question.
+# Partial data may exist in 4.1 problem types (market-related barriers).
+
+# ---- Indicator 4.5: Satisfaction with Hygiene NFI Access ----
+
+indicator_4.5 <- tryCatch({
+
+  satisfaction_field <- "hh_h_4_1_2_how_satisfied_is_your_household_with_regards_to_access_to_hygiene_items_soap_feminine_hygiene_products_baby_diapers_toothpaste_brush"
+
+  results_4.5 <- survey_design %>%
+    group_by(satisfaction = !!sym(satisfaction_field)) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(satisfaction)) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+
+  # Likert scale ordering (negative to positive)
+  likert_order <- c("Very unsatisfied", "Unsatisfied", "Don't know", "Satisfied", "Very satisfied")
+  results_4.5 <- results_4.5 %>%
+    mutate(satisfaction = factor(satisfaction, levels = likert_order)) %>%
+    filter(!is.na(satisfaction)) %>%
+    arrange(satisfaction)
+
+  # Diverging color scale (red to green)
+  likert_colors <- c("Very unsatisfied" = "#d32f2f", "Unsatisfied" = "#ef5350",
+                     "Don't know" = "#bdbdbd", "Satisfied" = "#66bb6a",
+                     "Very satisfied" = "#2e7d32")
+
+  plot_4.5 <- ggplot(results_4.5, aes(x = estimate_pct, y = "Satisfaction",
+                                       fill = satisfaction)) +
+    geom_col(position = "stack", color = "white", linewidth = 1.5) +
+    geom_text(aes(label = sprintf("%s\n%d%%", satisfaction, estimate_pct)),
+              position = position_stack(vjust = 0.5),
+              color = "white", fontface = "bold", size = 3) +
+    scale_fill_manual(values = likert_colors, name = "Satisfaction Level") +
+    labs(
+      title = "Indicator 4.5: Satisfaction with Hygiene NFI Access",
+      subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
+      x = "Percentage of Households",
+      y = NULL
+    ) +
+    scale_x_continuous(expand = c(0, 0)) +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "none")
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.5.png"),
+         plot = plot_4.5, width = 10, height = 4, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 4.5: Satisfaction with Hygiene NFI Access")
+
+  results_4.5 %>%
+    mutate(satisfaction = as.character(satisfaction)) %>%
+    select(satisfaction, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 4.5: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 4.6: Handwashing Device Access ----
+
+indicator_4.6 <- tryCatch({
+
+  device_field <- "hh_h_4_2_what_kind_of_handwashing_device_mechanism_do_your_household_members_usually_use_to_wash_their_hands_ask_to_see_the_handwashing_device"
+  supply_field <- "hh_h_4_2_1_do_you_have_enough_water_and_soap_for_handwashing"
+
+  # (a) Device type distribution
+  results_device <- survey_design %>%
+    group_by(device_type = !!sym(device_field)) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(device_type)) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    arrange(desc(estimate_pct))
+
+  # Clean device labels
+  results_device <- results_device %>%
+    mutate(device_label = str_replace_all(device_type, "_", " ") %>%
+             str_to_sentence() %>%
+             str_wrap(width = 40))
+
+  plot_4.6 <- create_hygiene_bar_plot(
+    data = results_device,
+    x_var = estimate_pct,
+    y_var = device_label,
+    title = "Indicator 4.6: Handwashing Device Type",
+    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.6.png"),
+         plot = plot_4.6, width = 10, height = 6, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 4.6: Handwashing Device Access")
+
+  results_device %>%
+    select(device_type = device_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 4.6: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicators 4.7 & 4.8: Water and Soap at Handwashing (Combined) ----
+
+indicator_4.7_4.8 <- tryCatch({
+
+  supply_field <- "hh_h_4_2_1_do_you_have_enough_water_and_soap_for_handwashing"
+
+  results_4.7_4.8 <- survey_design %>%
+    group_by(water_soap = !!sym(supply_field)) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(water_soap)) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+
+  plot_4.7_4.8 <- ggplot(results_4.7_4.8, aes(x = estimate_pct, y = water_soap)) +
+    geom_col(fill = "#532F87", width = 0.6) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.2, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              hjust = -0.2, size = 4) +
+    labs(title = "Indicators 4.7-4.8: Water and Soap at Handwashing",
+         subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nNote: survey asks about water AND soap combined; cannot separate"),
+         x = "Percentage of Households",
+         y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.7_4.8.png"),
+         plot = plot_4.7_4.8, width = 8, height = 4, dpi = 300, bg = "white")
+
+  message("  [OK] Indicators 4.7-4.8: Water and Soap at Handwashing")
+
+  results_4.7_4.8 %>%
+    select(water_soap, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicators 4.7-4.8: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 4.9.1: Soap at Home ----
+
+indicator_4.9.1 <- tryCatch({
+
+  soap_field <- "hh_h_4_2_2_do_you_have_enough_soap_at_household_for_all_purposes"
+
+  results_4.9.1 <- survey_design %>%
+    group_by(soap_at_home = !!sym(soap_field)) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(soap_at_home)) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+
+  plot_4.9.1 <- ggplot(results_4.9.1, aes(x = estimate_pct, y = soap_at_home)) +
+    geom_col(fill = "#532F87", width = 0.6) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.2, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              hjust = -0.2, size = 4) +
+    labs(title = "Indicator 4.9.1: Soap at Home",
+         subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nDo you have enough soap at household for all purposes?"),
+         x = "Percentage of Households",
+         y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.9.1.png"),
+         plot = plot_4.9.1, width = 8, height = 4, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 4.9.1: Soap at Home")
+
+  results_4.9.1 %>%
+    select(soap_at_home, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 4.9.1: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 4.9.2: Barriers to Soap Access ----
+
+indicator_4.9.2 <- tryCatch({
+
+  barrier_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_h_4_3_1_if_applicable_please_tell_me_the_main_reason_why_your_household_does_not_have_soap_")] %>%
+    setdiff(c("hh_h_4_3_1_if_applicable_please_tell_me_the_main_reason_why_your_household_does_not_have_soap",
+              "hh_h_4_3_1_if_applicable_please_tell_me_the_main_reason_why_your_household_does_not_have_soap_dont_know",
+              "hh_h_4_3_1_if_applicable_please_tell_me_the_main_reason_why_your_household_does_not_have_soap_don_t_know",
+              "hh_h_4_3_1_if_applicable_please_tell_me_the_main_reason_why_your_household_does_not_have_soap_other_specify"))
+
+  # Denominator: only HH without sufficient soap (4.9.1 = No)
+  soap_field <- "hh_h_4_2_2_do_you_have_enough_soap_at_household_for_all_purposes"
+  no_soap_data <- wash_data %>%
+    filter(!!sym(soap_field) == "No")
+
+  no_soap_design <- no_soap_data %>%
+    as_survey_design(
+      strata = camp_name,
+      ids = pseudo_cluster,
+      weights = weight,
+      nest = TRUE
+    )
+
+  barrier_results <- map_dfr(barrier_cols, function(col) {
+    no_soap_design %>%
+      summarise(
+        barrier_type = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      barrier_label = str_remove(barrier_type, "hh_h_4_3_1_if_applicable_please_tell_me_the_main_reason_why_your_household_does_not_have_soap_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        {if_else(. == "Yes", "Has soap (yes)", .)} %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_4.9.2 <- create_hygiene_bar_plot(
+    data = barrier_results,
+    x_var = estimate_pct,
+    y_var = barrier_label,
+    title = "Indicator 4.9.2: Barriers to Soap Access",
+    subtitle = glue("Among households WITHOUT sufficient soap (n={nrow(no_soap_data)} households)\nMulti-select question - percentages may sum >100%"),
+    label_position = "outside"
+  )
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.9.2.png"),
+         plot = plot_4.9.2, width = 10, height = 8, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 4.9.2: Barriers to Soap Access")
+
+  barrier_results %>%
+    select(barrier_type = barrier_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 4.9.2: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 4.10: SKIP (Data Gap) ----
+# Critical handwashing times knowledge not collected in survey.
+# Would require question about when respondents wash hands (before eating,
+# before food preparation, after defecation, etc.)
+
+# ---- Indicator 4.11: Menstrual Material Sufficiency ----
+
+indicator_4.11 <- tryCatch({
+
+  menstrual_field <- "during_your_last_menstrual_period_did_you_have_enough_menstrual_materials_to_change_as_often_as_you_wanted"
+
+  # Check if field exists and has data
+  source_field <- wash_data[[menstrual_field]]
+  if (is.null(source_field) || all(is.na(source_field))) {
+    message("  [NO DATA] Indicator 4.11: Menstrual materials field has no data")
+    return(NULL)
+  }
+
+  # Create age groups; filter to valid menstrual responses only (Yes/No)
+  menstrual_data <- wash_data %>%
+    filter(!!sym(menstrual_field) %in% c("Yes", "No")) %>%
+    mutate(
+      age_numeric = as.numeric(age_of_hh_respondent),
+      age_group = case_when(
+        age_numeric >= 15 & age_numeric <= 24 ~ "15-24",
+        age_numeric >= 25 & age_numeric <= 34 ~ "25-34",
+        age_numeric >= 35 & age_numeric <= 44 ~ "35-44",
+        age_numeric >= 45 & age_numeric <= 54 ~ "45-54",
+        TRUE ~ NA_character_
+      )
+    )
+
+  menstrual_design <- menstrual_data %>%
+    as_survey_design(
+      strata = camp_name,
+      ids = pseudo_cluster,
+      weights = weight,
+      nest = TRUE
+    )
+
+  # Overall estimate
+  overall_result <- menstrual_design %>%
+    summarise(
+      age_group = "Overall",
+      estimate_pct = survey_mean(!!sym(menstrual_field) == "Yes", vartype = "ci", na.rm = TRUE) * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+
+  # By age group (Tawila-wide only)
+  age_results <- menstrual_design %>%
+    filter(!is.na(age_group)) %>%
+    group_by(age_group) %>%
+    summarise(
+      estimate_pct = survey_mean(!!sym(menstrual_field) == "Yes", vartype = "ci", na.rm = TRUE) * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+
+  results_4.11 <- bind_rows(overall_result, age_results) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(age_group = factor(age_group, levels = c("Overall", "15-24", "25-34", "35-44", "45-54")))
+
+  plot_4.11 <- ggplot(results_4.11, aes(x = estimate_pct, y = age_group)) +
+    geom_col(fill = "#532F87", width = 0.6) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.2, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%% (n=%d)", estimate_pct, n_unweighted)),
+              hjust = -0.1, size = 3.5) +
+    labs(title = "Indicator 4.11: Menstrual Material Sufficiency",
+         subtitle = glue("% with enough materials, by respondent age group (Tawila-wide)\nNote: respondent age used as proxy for menstruating individual"),
+         x = "Percentage with Sufficient Materials",
+         y = "Age Group") +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.2)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.11.png"),
+         plot = plot_4.11, width = 10, height = 5, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 4.11: Menstrual Material Sufficiency")
+
+  results_4.11 %>%
+    mutate(age_group = as.character(age_group)) %>%
+    select(age_group, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 4.11: ", e$message)
+  return(NULL)
+})
+
+# ---- Hygiene Excel Export ----
+
+hygiene_sheets <- list(
+  "4.1 NFI Problems" = indicator_4.1,
+  "4.2 NFI Coping" = indicator_4.2,
+  "4.3 Hygiene Spending" = indicator_4.3,
+  "4.5 NFI Satisfaction" = indicator_4.5,
+  "4.6 Handwashing Device" = indicator_4.6,
+  "4.7-4.8 Water+Soap" = indicator_4.7_4.8,
+  "4.9.1 Soap at Home" = indicator_4.9.1,
+  "4.9.2 Soap Barriers" = indicator_4.9.2,
+  "4.11 Menstrual Materials" = indicator_4.11
+)
+
+hygiene_sheets <- hygiene_sheets %>% discard(is.null)
+
+output_file_hyg <- here("output", "wash_survey_hygiene_indicators.xlsx")
+write_xlsx(hygiene_sheets, path = output_file_hyg)
+
+message(glue("  Saved: {basename(output_file_hyg)} ({length(hygiene_sheets)} sheets)"))
+message(glue("  Plots: output/plots/hygiene_indicator_*.png ({length(hygiene_sheets)} files)\n"))
+
+# ==============================================================================
+# PUBLIC HEALTH INDICATOR (5.1)
+# ==============================================================================
+
+message("\n=== Processing Public Health Indicator ===\n")
+
+# ---- Indicator 5.1: SKIP (Data Gap) ----
+# WASH-related morbidity data (diarrhea, skin infections, eye infections, etc.)
+# not collected in this survey. Would require question about household members
+# experiencing WASH-related health issues in the past 30 days.
+message("  [SKIP] Indicator 5.1: WASH-related morbidity not collected in survey\n")
+
+# ==============================================================================
+# PRIORITIES INDICATORS (7.1-7.2)
+# ==============================================================================
+
+message("\n=== Processing Priorities Indicators ===\n")
+
+# ---- Indicator 7.1: Main Priority Concerns ----
+
+indicator_7.1 <- tryCatch({
+
+  priority_field <- "hh_h_6_1_which_of_the_following_is_your_biggest_wash_related_concern_right_now_for_your_household"
+
+  results_7.1 <- survey_design %>%
+    group_by(priority_concern = !!sym(priority_field)) %>%
+    summarise(
+      estimate_pct = survey_mean(vartype = "ci") * 100,
+      n_unweighted = unweighted(n()),
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(priority_concern)) %>%
+    rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      concern_label = str_wrap(priority_concern, width = 45)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_7.1 <- ggplot(results_7.1, aes(x = estimate_pct, y = reorder(concern_label, estimate_pct))) +
+    geom_col(fill = "#009999", width = 0.7) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              hjust = -0.2, size = 3.5) +
+    labs(title = "Indicator 7.1: Main WASH Priority Concerns",
+         subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nSingle-select: biggest WASH concern for the household"),
+         x = "Percentage of Households",
+         y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "priorities_indicator_7.1.png"),
+         plot = plot_7.1, width = 10, height = 6, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 7.1: Main Priority Concerns")
+
+  results_7.1 %>%
+    select(priority_concern = concern_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 7.1: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 7.2: Preferred Interventions ----
+
+indicator_7.2 <- tryCatch({
+
+  intervention_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_h_6_2_if_your_household_were_to_receive_support_to_address_your_concerns_what_would_you_prefer_")] %>%
+    setdiff(c("hh_h_6_2_if_your_household_were_to_receive_support_to_address_your_concerns_what_would_you_prefer",
+              "hh_h_6_2_if_your_household_were_to_receive_support_to_address_your_concerns_what_would_you_prefer_dont_know",
+              "hh_h_6_2_if_your_household_were_to_receive_support_to_address_your_concerns_what_would_you_prefer_don_t_know",
+              "hh_h_6_2_if_your_household_were_to_receive_support_to_address_your_concerns_what_would_you_prefer_other_specify"))
+
+  intervention_results <- map_dfr(intervention_cols, function(col) {
+    survey_design %>%
+      summarise(
+        intervention_type = col,
+        estimate_pct = survey_mean(coalesce(!!sym(col), 0) == 1, vartype = "ci") * 100,
+        n_unweighted = unweighted(sum(coalesce(!!sym(col), 0) == 1))
+      ) %>%
+      rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp)
+  }) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      intervention_label = str_remove(intervention_type, "hh_h_6_2_if_your_household_were_to_receive_support_to_address_your_concerns_what_would_you_prefer_") %>%
+        str_replace_all("_", " ") %>%
+        str_to_sentence() %>%
+        str_wrap(width = 50)
+    ) %>%
+    arrange(desc(estimate_pct))
+
+  plot_7.2 <- ggplot(intervention_results, aes(x = estimate_pct, y = reorder(intervention_label, estimate_pct))) +
+    geom_col(fill = "#009999", width = 0.7) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              hjust = -0.2, size = 3.5) +
+    labs(title = "Indicator 7.2: Preferred WASH Interventions",
+         subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
+         x = "Percentage of Households",
+         y = NULL) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "priorities_indicator_7.2.png"),
+         plot = plot_7.2, width = 10, height = 10, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 7.2: Preferred Interventions")
+
+  intervention_results %>%
+    select(intervention_type = intervention_label, estimate_pct, ci_lower_pct, ci_upper_pct, n_unweighted)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 7.2: ", e$message)
+  return(NULL)
+})
+
+# ---- Priorities Excel Export ----
+
+priorities_sheets <- list(
+  "7.1 Priority Concerns" = indicator_7.1,
+  "7.2 Preferred Interventions" = indicator_7.2
+)
+
+priorities_sheets <- priorities_sheets %>% discard(is.null)
+
+output_file_pri <- here("output", "wash_survey_priorities_indicators.xlsx")
+write_xlsx(priorities_sheets, path = output_file_pri)
+
+message(glue("  Saved: {basename(output_file_pri)} ({length(priorities_sheets)} sheets)"))
+message(glue("  Plots: output/plots/priorities_indicator_*.png ({length(priorities_sheets)} files)\n"))
+
+# ==============================================================================
 # TABLE 1: DISAGGREGATION INDICATORS (9 INDICATORS)
 # ==============================================================================
 
