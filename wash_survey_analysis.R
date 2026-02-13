@@ -1512,7 +1512,7 @@ indicator_2.5 <- tryCatch({
   }
 
   results_2.5 <- survey_design %>%
-    group_by(gender = gender_of_the_househld) %>%
+    group_by(gender = gender_of_the_respondent) %>%
     summarise(
       unsafe_pct = survey_mean(hh_s_2_5_do_you_feel_unsafe_at_the_sanitation_facilities_you_use_most_often_because_you_fear_being_harmed_or_assaulted_by_someone == "Yes", vartype = "ci", na.rm = TRUE) * 100,
       n_unweighted = unweighted(n()),
@@ -1531,8 +1531,8 @@ indicator_2.5 <- tryCatch({
               vjust = -0.5, size = 4) +
     scale_fill_manual(values = c("Female" = "#009999", "Male" = "#009999")) +
     labs(title = "Indicator 2.5: Feeling Unsafe at Sanitation Facilities",
-         subtitle = glue("By head of household gender (n={nrow(wash_data)} households)"),
-         x = "Head of Household Gender",
+         subtitle = glue("By respondent gender (n={nrow(wash_data)} households)"),
+         x = "Respondent Gender",
          y = "Percentage Reporting Feeling Unsafe") +
     scale_y_continuous(
       expand = expansion(mult = c(0, 0.15)),
