@@ -39,11 +39,11 @@ GWC_TEAL_GRADIENT_5 <- c("#b3e0e0", "#80cccc", "#4db8b8", "#1aa3a3", "#009999")
 # Teal comparison pair (for gender/category comparisons)
 GWC_TEAL_COMPARISON <- c(light = "#80cccc", dark = "#009999")
 
-# Diverging Likert scale (red-grey-teal)
+# Diverging Likert scale (red-teal)
 GWC_LIKERT_5 <- c(
   very_negative = "#e36159",
   negative = "#ed9289",
-  neutral = "#bdbdbd",
+  neutral = "#80cccc",
   positive = "#4db8b8",
   very_positive = "#009999"
 )
@@ -1526,7 +1526,7 @@ indicator_2.5 <- tryCatch({
   plot_2.5 <- ggplot(results_2.5, aes(x = gender, y = unsafe_pct, fill = gender)) +
     geom_col(width = 0.6) +
     geom_errorbar(aes(ymin = ci_lower_pct, ymax = ci_upper_pct),
-                  width = 0.2, linewidth = 0.5, color = "#888888") +
+                  width = 0.2, linewidth = 0.5, color = "#009999") +
     geom_text(aes(label = sprintf("%d%%", unsafe_pct)),
               vjust = -0.5, size = 4) +
     scale_fill_manual(values = c("Female" = GWC_TEAL_COMPARISON["dark"], "Male" = GWC_TEAL_COMPARISON["light"])) +
@@ -2264,11 +2264,11 @@ indicator_4.5 <- tryCatch({
 
   # Diverging color scale (red to teal)
   likert_colors <- c(
-    "Very unsatisfied" = GWC_LIKERT_5["very_negative"],
-    "Unsatisfied" = GWC_LIKERT_5["negative"],
-    "Don't know" = GWC_LIKERT_5["neutral"],
-    "Satisfied" = GWC_LIKERT_5["positive"],
-    "Very satisfied" = GWC_LIKERT_5["very_positive"]
+    "Very unsatisfied" = as.vector(GWC_LIKERT_5["very_negative"]),
+    "Unsatisfied" = as.vector(GWC_LIKERT_5["negative"]),
+    "Don't know" = as.vector(GWC_LIKERT_5["neutral"]),
+    "Satisfied" = as.vector(GWC_LIKERT_5["positive"]),
+    "Very satisfied" = as.vector(GWC_LIKERT_5["very_positive"])
   )
 
   plot_4.5 <- ggplot(results_4.5, aes(x = estimate_pct, y = "Satisfaction",
@@ -3000,12 +3000,11 @@ indicator_3a <- tryCatch({
       n_effective = n()
     )
   
-  plot_3a <- ggplot(wash_data %>% filter(!is.na(age_of_hh_respondent)), 
+  plot_3a <- ggplot(wash_data %>% filter(!is.na(age_of_hh_respondent)),
                     aes(x = as.numeric(age_of_hh_respondent))) +
     geom_histogram(binwidth = 5, boundary = 15, fill = "#009999", color = "white") +
-    geom_density(aes(y = after_stat(count) * 5), color = "#1aa3a3", linewidth = 1) +
     geom_vline(xintercept = age_stats$median_age, linetype = "dashed",
-               color = "#1aa3a3", linewidth = 0.8) +
+               color = "#e36159", linewidth = 0.8) +
     labs(
       title = "Indicator 3a: Age Distribution of Household Heads",
       subtitle = glue("Mean: {round(age_stats$mean_age)} years (95% CI: {round(age_stats$mean_age_low)}-{round(age_stats$mean_age_upp)}); Median: {round(age_stats$median_age)} years"),
