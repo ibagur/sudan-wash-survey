@@ -116,9 +116,9 @@ moe <- 1.96 * sqrt(0.25 / effective_n)
 ### Completed Indicators (38 of 41)
 
 **Table 2: WASH Theme Indicators** (29 active + 3 data gaps)
-- **Water (1.1-1.9)**: 6 indicators ✓ + 2 derived (container analysis)
-  - Color: `#28A1d2` (blue)
-  - Outputs: `wash_survey_water_indicators.xlsx`, 6 PNG plots
+- **Water (1.1-1.9)**: 7 indicators ✓ (1.2 split into 1.2 + 1.2.1) + 2 derived (container analysis)
+  - Color: `#28A1d2` (blue), `#009999` (teal for sufficient), `#e36159` (red for insufficient)
+  - Outputs: `wash_survey_water_indicators.xlsx`, 7 PNG plots
 - **Sanitation (2.1-3.0)**: 10 indicators ✓
   - Color: `#008d48` (green)
   - Outputs: `wash_survey_sanitation_indicators.xlsx`, 12 PNG plots
@@ -134,7 +134,7 @@ moe <- 1.96 * sqrt(0.25 / effective_n)
 - Camp distribution, demographics, vulnerability subgroups
 - Outputs: `wash_survey_disaggregation_indicators.xlsx`, 10 PNG plots
 
-**Total outputs**: 38 PNG plots + 5 Excel files + 2 data files (HH + container)
+**Total outputs**: 39 PNG plots + 5 Excel files + 2 data files (HH + container)
 
 ### Survey Design Implementation
 
@@ -456,6 +456,62 @@ data <- data %>%
 ```
 
 **For elderly counts (disaggregation indicators):** Handle outliers by capping at reasonable maximum (e.g., >4 elderly → NA)
+
+### 8. Survey_mean() NA Handling for Percentage Calculations
+
+**CRITICAL:** When calculating percentages that should sum to 100%, explicitly handle NAs instead of using `na.rm = TRUE`:
+
+**The Problem:**
+```r
+# WRONG - Excludes NAs from denominator
+survey_mean(
+  field == "value",
+  vartype = "ci", na.rm = TRUE
+) * 100
+```
+This calculates percentage among non-NA records only, not total population. For stacked bars or complete category breakdowns, percentages won't sum to 100%.
+
+**The Solution:**
+```r
+# CORRECT - Includes all records in denominator
+survey_mean(
+  !is.na(field) & field == "value",
+  vartype = "ci"
+) * 100
+```
+The `!is.na()` check ensures NAs count as FALSE (not matching condition), including them in the denominator.
+
+**When this matters:** Indicator 1.2.1 has `if_no_then_what_needs_are_not_covered` with 172 NAs (answered "Yes" to sufficiency) + 197 non-NAs (answered "No"). Using `na.rm = TRUE` would calculate insufficient categories as % of 197 instead of 369, making them sum to 100% alone.
+
+### 9. Indicator 1.2 Split: Stacked vs. Standard Bar Charts
+
+**Water sufficiency was split into two separate indicators:**
+
+**Indicator 1.2 (Drinking/Cooking):**
+- Simple Yes/No stacked horizontal bar
+- Format: Single bar with segments (Yes: 64% teal, No: 36% red)
+- Size: 8×3 inches
+- Use case: Binary outcome with clear majority
+
+**Indicator 1.2.1 (Other Domestic Purposes):**
+- Standard horizontal bar chart (NOT stacked)
+- 5 separate bars with full descriptive labels
+- Format: Each category on y-axis with percentage on x-axis
+- Size: 10×5 inches for label readability
+- Use case: Multiple categories with long descriptive labels
+
+**Key lesson:** Stacked bars work well for simple binary outcomes but become unreadable with long category labels. Use standard horizontal bars when descriptive labels are important or when you have 3+ categories with varying lengths.
+
+**Descriptive labels example:**
+```r
+display_label = c(
+  "Enough for other domestic purposes\n(bathing, washing)",
+  "Not enough for drinking, cooking\nand washing/bathing/general use",
+  "Not enough for basic needs",
+  "Not enough for drinking",
+  "Not enough for cooking"
+)
+```
 
 ## R Coding Preferences
 
