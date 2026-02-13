@@ -796,75 +796,205 @@ indicator_1.1 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 1.2: Water Sufficiency ----
+# ---- Indicator 1.2: Water Sufficiency for Drinking/Cooking ----
 
 indicator_1.2 <- tryCatch({
   results_1.2 <- survey_design %>%
     summarise(
-      sufficient_drinking_cooking_pct = survey_mean(
+      yes_pct = survey_mean(
         hh_ws_1_2_does_your_household_currently_have_enough_water_for_drinking_and_cooking == "Yes",
         vartype = "ci", na.rm = TRUE
       ) * 100,
-      sufficient_domestic_pct = survey_mean(
-        hh_ws_1_2_1_does_your_household_currently_have_enough_water_for_other_domestic_purposes_e_g_bathing_washing_etc == "Yes",
-        vartype = "ci", na.rm = TRUE
-      ) * 100,
-      sufficient_both_pct = survey_mean(
-        hh_ws_1_2_does_your_household_currently_have_enough_water_for_drinking_and_cooking == "Yes" &
-        hh_ws_1_2_1_does_your_household_currently_have_enough_water_for_other_domestic_purposes_e_g_bathing_washing_etc == "Yes",
+      no_pct = survey_mean(
+        hh_ws_1_2_does_your_household_currently_have_enough_water_for_drinking_and_cooking == "No",
         vartype = "ci", na.rm = TRUE
       ) * 100,
       n_unweighted = unweighted(n()),
       n_effective = n()
     )
 
-  # Manual reshaping for clarity
+  # Create stacked bar data
   results_1.2_plot <- tibble(
-    measure_label = factor(
-      c("Drinking/Cooking", "Other Domestic", "Both Purposes"),
-      levels = c("Drinking/Cooking", "Other Domestic", "Both Purposes")
-    ),
-    estimate_pct = c(
-      results_1.2$sufficient_drinking_cooking_pct,
-      results_1.2$sufficient_domestic_pct,
-      results_1.2$sufficient_both_pct
-    ),
-    ci_lower_pct = c(
-      results_1.2$sufficient_drinking_cooking_pct_low,
-      results_1.2$sufficient_domestic_pct_low,
-      results_1.2$sufficient_both_pct_low
-    ),
-    ci_upper_pct = c(
-      results_1.2$sufficient_drinking_cooking_pct_upp,
-      results_1.2$sufficient_domestic_pct_upp,
-      results_1.2$sufficient_both_pct_upp
-    )
+    category = factor(c("Yes", "No"), levels = c("Yes", "No")),
+    estimate_pct = c(results_1.2$yes_pct, results_1.2$no_pct),
+    ci_lower_pct = c(results_1.2$yes_pct_low, results_1.2$no_pct_low),
+    ci_upper_pct = c(results_1.2$yes_pct_upp, results_1.2$no_pct_upp),
+    fill_color = c("#009999", "#e36159"),
+    y = "Water Sufficiency"
   ) %>%
     mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
 
-  plot_1.2 <- ggplot(results_1.2_plot, aes(x = estimate_pct, y = measure_label)) +
-    geom_col(fill = "#009999", width = 0.6) +
-    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct), width = 0.3, color = "#888888") +
-    geom_text(aes(label = sprintf("%d%%", estimate_pct)), hjust = -0.2, size = 3.5) +
+  # Stacked horizontal bar
+  plot_1.2 <- ggplot(results_1.2_plot, aes(x = estimate_pct, y = y, fill = fill_color)) +
+    geom_col(position = "stack", color = "white", linewidth = 1.5) +
+    scale_fill_identity() +
+    geom_text(aes(label = sprintf("%s\n%d%%", category, estimate_pct)),
+              position = position_stack(vjust = 0.5), size = 4, color = "white", fontface = "bold") +
     labs(
-      title = "Indicator 1.2: Water Sufficiency",
+      title = "Indicator 1.2: Water Sufficiency for Drinking and Cooking",
       subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
       x = "Percentage of Households", y = NULL
     ) +
-    scale_x_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, 100)) +
-    theme_minimal(base_size = 12)
+    scale_x_continuous(limits = c(0, 100), expand = c(0, 0)) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks = element_blank()
+    )
 
   ggsave(here("output", "plots", "water_indicator_1.2.png"),
-         plot = plot_1.2, width = 8, height = 5, dpi = 300, bg = "white")
+         plot = plot_1.2, width = 8, height = 3, dpi = 300, bg = "white")
 
-  message("  [OK] Indicator 1.2: Water Sufficiency")
+  message("  [OK] Indicator 1.2: Water Sufficiency (Drinking/Cooking)")
 
   results_1.2_plot %>%
-    rename(indicator_category = measure_label) %>%
+    select(category, estimate_pct, ci_lower_pct, ci_upper_pct) %>%
     mutate(n_unweighted = results_1.2$n_unweighted, n_effective = results_1.2$n_effective)
 
 }, error = function(e) {
   message("  [ERROR] Indicator 1.2: ", e$message)
+  return(NULL)
+})
+
+# ---- Indicator 1.2.1: Water Sufficiency for Other Domestic Purposes ----
+
+indicator_1.2.1 <- tryCatch({
+  results_1.2.1 <- survey_design %>%
+    summarise(
+      sufficient_domestic_pct = survey_mean(
+        hh_ws_1_2_1_does_your_household_currently_have_enough_water_for_other_domestic_purposes_e_g_bathing_washing_etc == "Yes",
+        vartype = "ci", na.rm = TRUE
+      ) * 100,
+
+      insufficient_all_uses_pct = survey_mean(
+        !is.na(if_no_then_what_needs_are_not_covered) &
+        if_no_then_what_needs_are_not_covered == "drinking, cooking and washing/bathing/general use",
+        vartype = "ci"
+      ) * 100,
+
+      insufficient_basic_needs_pct = survey_mean(
+        !is.na(if_no_then_what_needs_are_not_covered) &
+        if_no_then_what_needs_are_not_covered == "not enough water for basic needs",
+        vartype = "ci"
+      ) * 100,
+
+      insufficient_drinking_pct = survey_mean(
+        !is.na(if_no_then_what_needs_are_not_covered) &
+        if_no_then_what_needs_are_not_covered == "only drinking",
+        vartype = "ci"
+      ) * 100,
+
+      insufficient_cooking_pct = survey_mean(
+        !is.na(if_no_then_what_needs_are_not_covered) &
+        if_no_then_what_needs_are_not_covered == "only cooking",
+        vartype = "ci"
+      ) * 100,
+
+      n_unweighted = unweighted(n()),
+      n_effective = n()
+    )
+
+  # Create bar chart data with descriptive labels
+  results_1.2.1_plot <- tibble(
+    category = factor(
+      c(
+        "Sufficient: Other Domestic",
+        "Insufficient: All uses",
+        "Insufficient: Basic needs",
+        "Insufficient: Only drinking",
+        "Insufficient: Only cooking"
+      ),
+      levels = rev(c(
+        "Sufficient: Other Domestic",
+        "Insufficient: All uses",
+        "Insufficient: Basic needs",
+        "Insufficient: Only drinking",
+        "Insufficient: Only cooking"
+      ))
+    ),
+    display_label = factor(
+      c(
+        "Enough for other domestic purposes\n(bathing, washing)",
+        "Not enough for drinking, cooking\nand washing/bathing/general use",
+        "Not enough for basic needs",
+        "Not enough for drinking",
+        "Not enough for cooking"
+      ),
+      levels = rev(c(
+        "Enough for other domestic purposes\n(bathing, washing)",
+        "Not enough for drinking, cooking\nand washing/bathing/general use",
+        "Not enough for basic needs",
+        "Not enough for drinking",
+        "Not enough for cooking"
+      ))
+    ),
+    estimate_pct = c(
+      results_1.2.1$sufficient_domestic_pct,
+      results_1.2.1$insufficient_all_uses_pct,
+      results_1.2.1$insufficient_basic_needs_pct,
+      results_1.2.1$insufficient_drinking_pct,
+      results_1.2.1$insufficient_cooking_pct
+    ),
+    ci_lower_pct = c(
+      results_1.2.1$sufficient_domestic_pct_low,
+      results_1.2.1$insufficient_all_uses_pct_low,
+      results_1.2.1$insufficient_basic_needs_pct_low,
+      results_1.2.1$insufficient_drinking_pct_low,
+      results_1.2.1$insufficient_cooking_pct_low
+    ),
+    ci_upper_pct = c(
+      results_1.2.1$sufficient_domestic_pct_upp,
+      results_1.2.1$insufficient_all_uses_pct_upp,
+      results_1.2.1$insufficient_basic_needs_pct_upp,
+      results_1.2.1$insufficient_drinking_pct_upp,
+      results_1.2.1$insufficient_cooking_pct_upp
+    ),
+    fill_color = c("#009999", "#e36159", "#e36159", "#e36159", "#e36159")
+  ) %>%
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+
+  # Standard horizontal bar chart with separate bars for each category
+  plot_1.2.1 <- ggplot(results_1.2.1_plot, aes(x = estimate_pct, y = display_label)) +
+    geom_col(aes(fill = fill_color), width = 0.7) +
+    scale_fill_identity() +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              hjust = -0.2, size = 3.5) +
+    labs(
+      title = "Indicator 1.2.1: Water sufficiency for other domestic purposes",
+      subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
+      x = "Percentage of Households",
+      y = NULL
+    ) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      limits = c(0, 100)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text.y = element_text(size = 10)
+    )
+
+  ggsave(here("output", "plots", "water_indicator_1.2.1.png"),
+         plot = plot_1.2.1, width = 10, height = 5, dpi = 300, bg = "white")
+
+  message("  [OK] Indicator 1.2.1: Water Sufficiency (Other Domestic)")
+
+  results_1.2.1_plot %>%
+    mutate(display_label = as.character(display_label)) %>%
+    select(category = display_label, estimate_pct, ci_lower_pct, ci_upper_pct) %>%
+    mutate(n_unweighted = results_1.2.1$n_unweighted, n_effective = results_1.2.1$n_effective)
+
+}, error = function(e) {
+  message("  [ERROR] Indicator 1.2.1: ", e$message)
   return(NULL)
 })
 
@@ -1192,7 +1322,8 @@ message("\n=== Exporting results to Excel ===")
 
 indicator_sheets <- list(
   "1.1 Water Source" = indicator_1.1,
-  "1.2 Water Sufficiency" = indicator_1.2,
+  "1.2 Sufficiency (Drinking)" = indicator_1.2,
+  "1.2.1 Sufficiency (Domestic)" = indicator_1.2.1,
   "1.3 Access Problems" = indicator_1.3,
   "1.4 Coping Mechanisms" = indicator_1.4,
   "1.6 Fetch Time" = indicator_1.6,
