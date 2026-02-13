@@ -1116,7 +1116,7 @@ indicator_1.9 <- tryCatch({
     mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
     mutate(
       in_target = str_detect(frc_clean, "TARGET"),
-      fill_color = if_else(in_target, "#009999", "#80cccc")
+      fill_color = if_else(in_target, "#009999", "#e36159")
     )
 
   pct_in_target <- results_1.9 %>% filter(in_target) %>% pull(estimate_pct) %>% sum()
@@ -1133,7 +1133,7 @@ indicator_1.9 <- tryCatch({
       subtitle = glue("Overall Tawila-wide estimate (n={sum(results_1.9$n_unweighted)} households tested)\nTarget range (0.2-1.0 mg/l): {round(pct_in_target)}%"),
       x = "Percentage of Households",
       y = NULL,
-      caption = "Dark blue: Sphere Standard target range (0.2-1.0 mg/l)"
+      caption = "Teal: Sphere Standard target range (0.2-1.0 mg/l) | Red: Outside target range"
     ) +
     scale_x_continuous(expand = c(0, 0)) +
     theme_minimal(base_size = 12)
@@ -1367,12 +1367,19 @@ indicator_2.2 <- tryCatch({
     mutate(sharing_category = factor(sharing_category, levels = c("No sharing (private)", "2-5 households", "6-10 households", "11-20 households", ">20 households"))) %>%
     arrange(sharing_category)
 
-  plot_2.2 <- ggplot(results_2.2, aes(x = estimate_pct, y = sharing_category)) +
-    geom_col(fill = "#009999", width = 0.7) +
+  plot_2.2 <- ggplot(results_2.2, aes(x = estimate_pct, y = sharing_category, fill = sharing_category)) +
+    geom_col(width = 0.7) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
               hjust = -0.2, size = 3.5) +
+    scale_fill_manual(values = c(
+      "No sharing (private)" = "#009999",
+      "2-5 households" = "#009999",
+      "6-10 households" = "#009999",
+      "11-20 households" = "#e36159",
+      ">20 households" = "#e36159"
+    )) +
     labs(title = "Indicator 2.2: Sanitation Facility Sharing",
          subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nSphere standard: max 1 toilet per 20 people"),
          x = "Percentage of Households",
@@ -1387,7 +1394,8 @@ indicator_2.2 <- tryCatch({
       plot.subtitle = element_text(color = "grey40", size = 11),
       panel.grid.major.y = element_blank(),
       panel.grid.minor = element_blank(),
-      axis.text = element_text(size = 10)
+      axis.text = element_text(size = 10),
+      legend.position = "none"
     )
 
   ggsave(here("output", "plots", "sanitation_indicator_2.2.png"),
@@ -1529,7 +1537,7 @@ indicator_2.5 <- tryCatch({
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", unsafe_pct)),
               vjust = -0.5, size = 4) +
-    scale_fill_manual(values = c("Female" = "#009999", "Male" = "#009999")) +
+    scale_fill_manual(values = c("Female" = "#e36159", "Male" = "#e36159")) +
     labs(title = "Indicator 2.5: Feeling Unsafe at Sanitation Facilities",
          subtitle = glue("By respondent gender (n={nrow(wash_data)} households)"),
          x = "Respondent Gender",
@@ -1585,7 +1593,7 @@ indicator_2.6a <- tryCatch({
     mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
 
   plot_2.6a <- ggplot(results_2.6a, aes(x = estimate_pct, y = observed)) +
-    geom_col(fill = "#009999", width = 0.7) +
+    geom_col(fill = "#e36159", width = 0.7) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -1737,16 +1745,36 @@ indicator_2.7 <- tryCatch({
         str_to_sentence() %>%
         str_wrap(width = 50)
     ) %>%
-    arrange(desc(estimate_pct))
+    arrange(desc(estimate_pct)) %>%
+    mutate(
+      fill_color = if_else(str_detect(practice_label, "(?i)open defec"), "#e36159", "#009999")
+    )
 
-  plot_2.7 <- create_sanitation_bar_plot(
-    data = practice_results,
-    x_var = estimate_pct,
-    y_var = practice_label,
-    title = "Indicator 2.7: Children <5 Defecation Practices",
-    subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
-    label_position = "outside"
-  )
+  plot_2.7 <- ggplot(practice_results, aes(x = estimate_pct, y = reorder(practice_label, estimate_pct))) +
+    geom_col(aes(fill = fill_color), width = 0.7) +
+    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              hjust = -0.2, size = 3.5) +
+    scale_fill_identity() +
+    labs(
+      title = "Indicator 2.7: Children <5 Defecation Practices",
+      subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
+      x = "Percentage of Households",
+      y = NULL
+    ) +
+    scale_x_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 10)
+    )
 
   ggsave(here("output", "plots", "sanitation_indicator_2.7.png"),
          plot = plot_2.7, width = 10, height = 6, dpi = 300, bg = "white")
@@ -1781,10 +1809,14 @@ indicator_2.8 <- tryCatch({
     ) %>%
     filter(!is.na(status)) %>%
     rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
-    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      fill_color = if_else(status == "Yes", "#e36159", "#009999")
+    )
 
   plot_2.8 <- ggplot(results_2.8, aes(x = estimate_pct, y = status)) +
-    geom_col(fill = "#009999", width = 0.7) +
+    geom_col(aes(fill = fill_color), width = 0.7) +
+    scale_fill_identity() +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -1845,7 +1877,10 @@ indicator_2.9 <- tryCatch({
   # Order categories logically
   category_order <- c("Never visible", "Sometime visible", "Frequently visible", "Don't know")
   results_2.9 <- results_2.9 %>%
-    mutate(frequency = factor(frequency, levels = rev(category_order)))
+    mutate(
+      frequency = factor(frequency, levels = rev(category_order)),
+      fill_color = if_else(frequency %in% c("Sometime visible", "Frequently visible"), "#e36159", "#009999")
+    )
 
   # Calculate combined "any visible" percentage for subtitle
   any_visible_pct <- results_2.9 %>%
@@ -1854,7 +1889,8 @@ indicator_2.9 <- tryCatch({
     pull(pct)
 
   plot_2.9 <- ggplot(results_2.9, aes(x = estimate_pct, y = frequency)) +
-    geom_col(fill = "#009999", width = 0.7) +
+    geom_col(aes(fill = fill_color), width = 0.7) +
+    scale_fill_identity() +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -2397,10 +2433,14 @@ indicator_4.7_4.8 <- tryCatch({
     ) %>%
     filter(!is.na(water_soap)) %>%
     rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
-    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      fill_color = if_else(water_soap == "No", "#e36159", "#009999")
+    )
 
   plot_4.7_4.8 <- ggplot(results_4.7_4.8, aes(x = estimate_pct, y = water_soap)) +
-    geom_col(fill = "#009999", width = 0.6) +
+    geom_col(aes(fill = fill_color), width = 0.6) +
+    scale_fill_identity() +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -2450,10 +2490,14 @@ indicator_4.9.1 <- tryCatch({
     ) %>%
     filter(!is.na(soap_at_home)) %>%
     rename(ci_lower_pct = estimate_pct_low, ci_upper_pct = estimate_pct_upp) %>%
-    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
+    mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
+    mutate(
+      fill_color = if_else(soap_at_home == "No", "#e36159", "#009999")
+    )
 
   plot_4.9.1 <- ggplot(results_4.9.1, aes(x = estimate_pct, y = soap_at_home)) +
-    geom_col(fill = "#009999", width = 0.6) +
+    geom_col(aes(fill = fill_color), width = 0.6) +
+    scale_fill_identity() +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -2618,7 +2662,7 @@ indicator_4.11 <- tryCatch({
     mutate(age_group = factor(age_group, levels = c("Overall", "15-24", "25-34", "35-44", "45-54")))
 
   plot_4.11 <- ggplot(results_4.11, aes(x = estimate_pct, y = age_group)) +
-    geom_col(fill = "#009999", width = 0.6) +
+    geom_col(fill = "#e36159", width = 0.6) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%% (n=%d)", estimate_pct, n_unweighted)),
