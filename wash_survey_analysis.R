@@ -1529,7 +1529,7 @@ indicator_2.5 <- tryCatch({
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", unsafe_pct)),
               vjust = -0.5, size = 4) +
-    scale_fill_manual(values = c("Female" = as.vector(GWC_TEAL_COMPARISON["dark"]), "Male" = as.vector(GWC_TEAL_COMPARISON["light"]))) +
+    scale_fill_manual(values = c("Female" = "#009999", "Male" = "#009999")) +
     labs(title = "Indicator 2.5: Feeling Unsafe at Sanitation Facilities",
          subtitle = glue("By head of household gender (n={nrow(wash_data)} households)"),
          x = "Head of Household Gender",
