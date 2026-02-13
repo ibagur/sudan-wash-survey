@@ -1526,7 +1526,7 @@ indicator_2.5 <- tryCatch({
   plot_2.5 <- ggplot(results_2.5, aes(x = gender, y = unsafe_pct, fill = gender)) +
     geom_col(width = 0.6) +
     geom_errorbar(aes(ymin = ci_lower_pct, ymax = ci_upper_pct),
-                  width = 0.2, linewidth = 0.5, color = "#009999") +
+                  width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", unsafe_pct)),
               vjust = -0.5, size = 4) +
     scale_fill_manual(values = c("Female" = GWC_TEAL_COMPARISON["dark"], "Male" = GWC_TEAL_COMPARISON["light"])) +
