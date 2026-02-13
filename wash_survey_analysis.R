@@ -1017,6 +1017,43 @@ indicator_1.6 <- tryCatch({
   ggsave(here("output", "plots", "water_indicator_1.6.png"),
          plot = plot_1.6, width = 10, height = 4, dpi = 300, bg = "white")
 
+  # Create vertical bar chart (alternative visualization)
+  plot_1.6_bar <- ggplot(fetch_results, aes(x = reorder(category_label, category_order), y = estimate_pct)) +
+    geom_col(aes(fill = exceeds_sphere), width = 0.7) +
+    geom_errorbar(aes(ymin = ci_lower_pct, ymax = ci_upper_pct),
+                  width = 0.3, linewidth = 0.5, color = "#888888") +
+    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
+              vjust = -0.5, size = 3.5, fontface = "bold") +
+    scale_fill_manual(
+      values = c("FALSE" = "#28A1d2", "TRUE" = "#ff6666"),
+      labels = c("FALSE" = "Meets Sphere Standard", "TRUE" = "Exceeds 30 minutes"),
+      name = NULL
+    ) +
+    labs(
+      title = "Indicator 1.6: Time to Fetch Water (Round Trip)",
+      subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
+      x = "Fetch Time Category",
+      y = "Percentage of Households",
+      caption = "Red: Exceeds Sphere Standard (>30 minutes)\nError bars: 95% confidence intervals"
+    ) +
+    scale_y_continuous(
+      expand = expansion(mult = c(0, 0.15)),
+      labels = scales::label_percent(scale = 1)
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40", size = 11),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+      axis.text.y = element_text(size = 10),
+      legend.position = "bottom"
+    )
+
+  ggsave(here("output", "plots", "water_indicator_1.6_bar.png"),
+         plot = plot_1.6_bar, width = 10, height = 6, dpi = 300, bg = "white")
+
   message("  [OK] Indicator 1.6: Fetch Time Categories")
 
   fetch_results %>%
@@ -1036,7 +1073,7 @@ indicator_1.9 <- tryCatch({
         str_detect(hh_wq_1_3_2_frc_test_result, "^0$|0\\.0") ~ "0.0 mg/l",
         str_detect(hh_wq_1_3_2_frc_test_result, "Below 0\\.2") ~ "Below 0.2 mg/l",
         str_detect(hh_wq_1_3_2_frc_test_result, "0\\.2.*0[,\\.]5") ~ "0.2-0.5 mg/l (TARGET)",
-        str_detect(hh_wq_1_3_2_frc_test_result, "0\\.5.*1\\.0") ~ "0.5-1.0 mg/l",
+        str_detect(hh_wq_1_3_2_frc_test_result, "0\\.5.*1\\.0") ~ "0.5-1.0 mg/l (TARGET)",
         str_detect(hh_wq_1_3_2_frc_test_result, "More than|>1") ~ ">1.0 mg/l",
         TRUE ~ NA_character_
       )
@@ -1054,7 +1091,7 @@ indicator_1.9 <- tryCatch({
         frc_clean == "0.0 mg/l" ~ 1,
         frc_clean == "Below 0.2 mg/l" ~ 2,
         frc_clean == "0.2-0.5 mg/l (TARGET)" ~ 3,
-        frc_clean == "0.5-1.0 mg/l" ~ 4,
+        frc_clean == "0.5-1.0 mg/l (TARGET)" ~ 4,
         frc_clean == ">1.0 mg/l" ~ 5
       )
     ) %>%
@@ -1066,7 +1103,7 @@ indicator_1.9 <- tryCatch({
       fill_color = if_else(in_target, "#28A1d2", "#8CbFbF")
     )
 
-  pct_in_target <- results_1.9 %>% filter(in_target) %>% pull(estimate_pct)
+  pct_in_target <- results_1.9 %>% filter(in_target) %>% pull(estimate_pct) %>% sum()
 
   plot_1.9 <- ggplot(results_1.9, aes(x = estimate_pct, y = "FRC Level",
                                       fill = fill_color)) +
@@ -1077,16 +1114,50 @@ indicator_1.9 <- tryCatch({
     scale_fill_identity() +
     labs(
       title = "Indicator 1.9: Free Residual Chlorine (FRC) Levels",
-      subtitle = glue("Overall Tawila-wide estimate (n={sum(results_1.9$n_unweighted)} households tested)\nTarget range (0.2-0.5 mg/l): {round(pct_in_target)}%"),
+      subtitle = glue("Overall Tawila-wide estimate (n={sum(results_1.9$n_unweighted)} households tested)\nTarget range (0.2-1.0 mg/l): {round(pct_in_target)}%"),
       x = "Percentage of Households",
       y = NULL,
-      caption = "Dark blue: Sphere Standard target range (0.2-0.5 mg/l)"
+      caption = "Dark blue: Sphere Standard target range (0.2-1.0 mg/l)"
     ) +
     scale_x_continuous(expand = c(0, 0)) +
     theme_minimal(base_size = 12)
 
   ggsave(here("output", "plots", "water_indicator_1.9.png"),
          plot = plot_1.9, width = 10, height = 4, dpi = 300, bg = "white")
+
+  # Create donut chart (alternative visualization)
+  donut_data <- results_1.9 %>%
+    arrange(frc_order) %>%
+    mutate(
+      fraction = estimate_pct / 100,
+      ymax = cumsum(fraction),
+      ymin = c(0, head(ymax, n = -1)),
+      label_position = (ymax + ymin) / 2,
+      label_text = sprintf("%s\n%d%%", str_replace(frc_clean, " \\(TARGET\\)", ""), estimate_pct)
+    )
+
+  plot_1.9_donut <- ggplot(donut_data, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 2, fill = fill_color)) +
+    geom_rect(color = "white", linewidth = 2) +
+    geom_text(aes(x = 3, y = label_position, label = label_text),
+              color = "white", fontface = "bold", size = 3.5) +
+    annotate("text", x = 0, y = 0,
+             label = sprintf("TARGET\n%d%%\nin range", round(pct_in_target)),
+             color = "#28A1d2", fontface = "bold", size = 5) +
+    coord_polar(theta = "y") +
+    xlim(c(0, 4)) +
+    scale_fill_identity() +
+    labs(
+      title = "Indicator 1.9: Free Residual Chlorine (FRC) Levels",
+      subtitle = glue("Overall Tawila-wide estimate (n={sum(results_1.9$n_unweighted)} households tested)")
+    ) +
+    theme_void() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+      plot.subtitle = element_text(hjust = 0.5, size = 10, margin = margin(b = 10))
+    )
+
+  ggsave(here("output", "plots", "water_indicator_1.9_donut.png"),
+         plot = plot_1.9_donut, width = 8, height = 8, dpi = 300, bg = "white")
 
   message("  [OK] Indicator 1.9: FRC Levels")
 
@@ -2106,6 +2177,38 @@ indicator_4.3 <- tryCatch({
   ggsave(here("output", "plots", "hygiene_indicator_4.3.png"),
          plot = plot_4.3, width = 10, height = 4, dpi = 300, bg = "white")
 
+  # Create donut chart (alternative visualization)
+  donut_data_4.3 <- results_4.3 %>%
+    arrange(category_order) %>%
+    mutate(
+      fraction = estimate_pct / 100,
+      ymax = cumsum(fraction),
+      ymin = c(0, head(ymax, n = -1)),
+      label_position = (ymax + ymin) / 2,
+      label_text = sprintf("%s\n%d%%", category_label, estimate_pct),
+      fill_color = fill_colors[seq_len(n())]
+    )
+
+  plot_4.3_donut <- ggplot(donut_data_4.3, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 2, fill = fill_color)) +
+    geom_rect(color = "white", linewidth = 2) +
+    geom_text(aes(x = 3, y = label_position, label = label_text),
+              color = "white", fontface = "bold", size = 3) +
+    coord_polar(theta = "y") +
+    xlim(c(0, 4)) +
+    scale_fill_identity() +
+    labs(
+      title = "Indicator 4.3: Hygiene Spending (Past 30 Days)",
+      subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)")
+    ) +
+    theme_void() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+      plot.subtitle = element_text(hjust = 0.5, size = 10, margin = margin(b = 10))
+    )
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.3_donut.png"),
+         plot = plot_4.3_donut, width = 8, height = 8, dpi = 300, bg = "white")
+
   message("  [OK] Indicator 4.3: Hygiene Spending Categories")
 
   results_4.3 %>%
@@ -2168,6 +2271,38 @@ indicator_4.5 <- tryCatch({
 
   ggsave(here("output", "plots", "hygiene_indicator_4.5.png"),
          plot = plot_4.5, width = 10, height = 4, dpi = 300, bg = "white")
+
+  # Create donut chart (alternative visualization)
+  donut_data_4.5 <- results_4.5 %>%
+    arrange(satisfaction) %>%
+    mutate(
+      fraction = estimate_pct / 100,
+      ymax = cumsum(fraction),
+      ymin = c(0, head(ymax, n = -1)),
+      label_position = (ymax + ymin) / 2,
+      label_text = sprintf("%s\n%d%%", satisfaction, estimate_pct),
+      fill_color = likert_colors[as.character(satisfaction)]
+    )
+
+  plot_4.5_donut <- ggplot(donut_data_4.5, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 2, fill = fill_color)) +
+    geom_rect(color = "white", linewidth = 2) +
+    geom_text(aes(x = 3, y = label_position, label = label_text),
+              color = "white", fontface = "bold", size = 3) +
+    coord_polar(theta = "y") +
+    xlim(c(0, 4)) +
+    scale_fill_identity() +
+    labs(
+      title = "Indicator 4.5: Satisfaction with Hygiene NFI Access",
+      subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)")
+    ) +
+    theme_void() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+      plot.subtitle = element_text(hjust = 0.5, size = 10, margin = margin(b = 10))
+    )
+
+  ggsave(here("output", "plots", "hygiene_indicator_4.5_donut.png"),
+         plot = plot_4.5_donut, width = 8, height = 8, dpi = 300, bg = "white")
 
   message("  [OK] Indicator 4.5: Satisfaction with Hygiene NFI Access")
 
