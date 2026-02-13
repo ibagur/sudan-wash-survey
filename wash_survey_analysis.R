@@ -27,10 +27,26 @@ library(glue)
 library(janitor)
 library(jsonlite)  # Parse JSON from /data.json endpoint
 
-# Color palettes Global WASH Cluster
-GWC_PALETTE_GENERAL <- c("#009999", "#333333", "#000000")
-GWC_PALETTE_COMPLEMENTARY <- c("#024e6C", "#383F48", "#8CbFbF", "#ffb340", "#e36159")
-GWC_PALETTE_WATER_SANITATION_HYGIENE <- c("#28A1d2", "#532F87", "#008d48")
+# Color palettes Global WASH Cluster - RESTRICTED PALETTE
+GWC_PALETTE_PRIMARY <- "#009999"  # Teal (all indicators)
+GWC_PALETTE_SECONDARY <- "#e36159"  # Red (negatives, Sphere violations)
+GWC_PALETTE_NEUTRAL <- "#bdbdbd"  # Grey (neutral/don't know)
+GWC_ERROR_BARS <- "#888888"  # Unchanged
+
+# Teal gradient (5 shades, light to dark)
+GWC_TEAL_GRADIENT_5 <- c("#b3e0e0", "#80cccc", "#4db8b8", "#1aa3a3", "#009999")
+
+# Teal comparison pair (for gender/category comparisons)
+GWC_TEAL_COMPARISON <- c(light = "#80cccc", dark = "#009999")
+
+# Diverging Likert scale (red-grey-teal)
+GWC_LIKERT_5 <- c(
+  very_negative = "#e36159",
+  negative = "#ed9289",
+  neutral = "#bdbdbd",
+  positive = "#4db8b8",
+  very_positive = "#009999"
+)
 
 # Configuration -----
 kobo_config_path <- here("config.yaml")
@@ -700,7 +716,7 @@ message(glue("  Survey design created: {nrow(wash_data)} households, effective n
 
 create_water_bar_plot <- function(data, x_var, y_var, title, subtitle,
                                   x_label = "Percentage of Households",
-                                  fill_color = "#28A1d2",
+                                  fill_color = "#009999",
                                   reference_line = NULL,
                                   x_limits = c(0, NA),
                                   label_position = "none") {
@@ -827,7 +843,7 @@ indicator_1.2 <- tryCatch({
     mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
 
   plot_1.2 <- ggplot(results_1.2_plot, aes(x = estimate_pct, y = measure_label)) +
-    geom_col(fill = "#28A1d2", width = 0.6) +
+    geom_col(fill = "#009999", width = 0.6) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct), width = 0.3, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)), hjust = -0.2, size = 3.5) +
     labs(
@@ -1000,7 +1016,7 @@ indicator_1.6 <- tryCatch({
               position = position_stack(vjust = 0.5),
               color = "white", fontface = "bold", size = 3.5) +
     scale_fill_manual(
-      values = c("#004d99", "#0066cc", "#3399ff", "#66b3ff", "#99ccff", "#ff6666"),
+      values = c(GWC_TEAL_GRADIENT_5, "#e36159"),
       name = "Time Category"
     ) +
     labs(
@@ -1025,7 +1041,7 @@ indicator_1.6 <- tryCatch({
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
               vjust = -0.5, size = 3.5, fontface = "bold") +
     scale_fill_manual(
-      values = c("FALSE" = "#28A1d2", "TRUE" = "#ff6666"),
+      values = c("FALSE" = "#009999", "TRUE" = "#e36159"),
       labels = c("FALSE" = "Meets Sphere Standard", "TRUE" = "Exceeds 30 minutes"),
       name = NULL
     ) +
@@ -1100,7 +1116,7 @@ indicator_1.9 <- tryCatch({
     mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round)) %>%
     mutate(
       in_target = str_detect(frc_clean, "TARGET"),
-      fill_color = if_else(in_target, "#28A1d2", "#8CbFbF")
+      fill_color = if_else(in_target, "#009999", "#80cccc")
     )
 
   pct_in_target <- results_1.9 %>% filter(in_target) %>% pull(estimate_pct) %>% sum()
@@ -1142,7 +1158,7 @@ indicator_1.9 <- tryCatch({
               color = "white", fontface = "bold", size = 3.5) +
     annotate("text", x = 0, y = 0,
              label = sprintf("TARGET\n%d%%\nin range", round(pct_in_target)),
-             color = "#28A1d2", fontface = "bold", size = 5) +
+             color = "#009999", fontface = "bold", size = 5) +
     coord_polar(theta = "y") +
     xlim(c(0, 4)) +
     scale_fill_identity() +
@@ -1224,7 +1240,7 @@ survey_design <- wash_data %>%
 
 create_sanitation_bar_plot <- function(data, x_var, y_var, title, subtitle,
                                        x_label = "Percentage of Households",
-                                       fill_color = "#008d48",
+                                       fill_color = "#009999",
                                        reference_line = NULL,
                                        x_limits = c(0, NA),
                                        label_position = "none") {
@@ -1352,7 +1368,7 @@ indicator_2.2 <- tryCatch({
     arrange(sharing_category)
 
   plot_2.2 <- ggplot(results_2.2, aes(x = estimate_pct, y = sharing_category)) +
-    geom_col(fill = "#008d48", width = 0.7) +
+    geom_col(fill = "#009999", width = 0.7) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -1513,7 +1529,7 @@ indicator_2.5 <- tryCatch({
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", unsafe_pct)),
               vjust = -0.5, size = 4) +
-    scale_fill_manual(values = c("Female" = "#008d48", "Male" = "#5bb5a2")) +
+    scale_fill_manual(values = c("Female" = GWC_TEAL_COMPARISON["dark"], "Male" = GWC_TEAL_COMPARISON["light"])) +
     labs(title = "Indicator 2.5: Feeling Unsafe at Sanitation Facilities",
          subtitle = glue("By head of household gender (n={nrow(wash_data)} households)"),
          x = "Head of Household Gender",
@@ -1569,7 +1585,7 @@ indicator_2.6a <- tryCatch({
     mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
 
   plot_2.6a <- ggplot(results_2.6a, aes(x = estimate_pct, y = observed)) +
-    geom_col(fill = "#008d48", width = 0.7) +
+    geom_col(fill = "#009999", width = 0.7) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -1768,7 +1784,7 @@ indicator_2.8 <- tryCatch({
     mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
 
   plot_2.8 <- ggplot(results_2.8, aes(x = estimate_pct, y = status)) +
-    geom_col(fill = "#008d48", width = 0.7) +
+    geom_col(fill = "#009999", width = 0.7) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -1838,7 +1854,7 @@ indicator_2.9 <- tryCatch({
     pull(pct)
 
   plot_2.9 <- ggplot(results_2.9, aes(x = estimate_pct, y = frequency)) +
-    geom_col(fill = "#008d48", width = 0.7) +
+    geom_col(fill = "#009999", width = 0.7) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -1980,7 +1996,7 @@ survey_design <- wash_data %>%
 
 create_hygiene_bar_plot <- function(data, x_var, y_var, title, subtitle,
                                     x_label = "Percentage of Households",
-                                    fill_color = "#532F87",
+                                    fill_color = "#009999",
                                     reference_line = NULL,
                                     x_limits = c(0, NA),
                                     label_position = "none") {
@@ -2151,10 +2167,9 @@ indicator_4.3 <- tryCatch({
     ) %>%
     arrange(category_order)
 
-  # Purple gradient for hygiene spending
-  purple_gradient <- c("#e8d5f5", "#c9a0e0", "#a56cc7", "#7b3f9e", "#532F87")
+  # Teal gradient for hygiene spending
   # Trim to number of categories
-  fill_colors <- purple_gradient[seq_len(nrow(results_4.3))]
+  fill_colors <- GWC_TEAL_GRADIENT_5[seq_len(nrow(results_4.3))]
 
   plot_4.3 <- ggplot(results_4.3, aes(x = estimate_pct, y = "Spending",
                                        fill = factor(category_label, levels = rev(unique(category_label))))) +
@@ -2247,10 +2262,14 @@ indicator_4.5 <- tryCatch({
     filter(!is.na(satisfaction)) %>%
     arrange(satisfaction)
 
-  # Diverging color scale (red to green)
-  likert_colors <- c("Very unsatisfied" = "#d32f2f", "Unsatisfied" = "#ef5350",
-                     "Don't know" = "#bdbdbd", "Satisfied" = "#66bb6a",
-                     "Very satisfied" = "#2e7d32")
+  # Diverging color scale (red to teal)
+  likert_colors <- c(
+    "Very unsatisfied" = GWC_LIKERT_5["very_negative"],
+    "Unsatisfied" = GWC_LIKERT_5["negative"],
+    "Don't know" = GWC_LIKERT_5["neutral"],
+    "Satisfied" = GWC_LIKERT_5["positive"],
+    "Very satisfied" = GWC_LIKERT_5["very_positive"]
+  )
 
   plot_4.5 <- ggplot(results_4.5, aes(x = estimate_pct, y = "Satisfaction",
                                        fill = satisfaction)) +
@@ -2381,7 +2400,7 @@ indicator_4.7_4.8 <- tryCatch({
     mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
 
   plot_4.7_4.8 <- ggplot(results_4.7_4.8, aes(x = estimate_pct, y = water_soap)) +
-    geom_col(fill = "#532F87", width = 0.6) +
+    geom_col(fill = "#009999", width = 0.6) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -2434,7 +2453,7 @@ indicator_4.9.1 <- tryCatch({
     mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
 
   plot_4.9.1 <- ggplot(results_4.9.1, aes(x = estimate_pct, y = soap_at_home)) +
-    geom_col(fill = "#532F87", width = 0.6) +
+    geom_col(fill = "#009999", width = 0.6) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -2599,7 +2618,7 @@ indicator_4.11 <- tryCatch({
     mutate(age_group = factor(age_group, levels = c("Overall", "15-24", "25-34", "35-44", "45-54")))
 
   plot_4.11 <- ggplot(results_4.11, aes(x = estimate_pct, y = age_group)) +
-    geom_col(fill = "#532F87", width = 0.6) +
+    geom_col(fill = "#009999", width = 0.6) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%% (n=%d)", estimate_pct, n_unweighted)),
@@ -2984,9 +3003,9 @@ indicator_3a <- tryCatch({
   plot_3a <- ggplot(wash_data %>% filter(!is.na(age_of_hh_respondent)), 
                     aes(x = as.numeric(age_of_hh_respondent))) +
     geom_histogram(binwidth = 5, boundary = 15, fill = "#009999", color = "white") +
-    geom_density(aes(y = after_stat(count) * 5), color = "#024e6C", linewidth = 1) +
-    geom_vline(xintercept = age_stats$median_age, linetype = "dashed", 
-               color = "#024e6C", linewidth = 0.8) +
+    geom_density(aes(y = after_stat(count) * 5), color = "#1aa3a3", linewidth = 1) +
+    geom_vline(xintercept = age_stats$median_age, linetype = "dashed",
+               color = "#1aa3a3", linewidth = 0.8) +
     labs(
       title = "Indicator 3a: Age Distribution of Household Heads",
       subtitle = glue("Mean: {round(age_stats$mean_age)} years (95% CI: {round(age_stats$mean_age_low)}-{round(age_stats$mean_age_upp)}); Median: {round(age_stats$median_age)} years"),
