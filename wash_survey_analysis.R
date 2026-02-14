@@ -1,9 +1,9 @@
-# ================================================================================
-# SECTION 1: SETUP & CONFIGURATION
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 1: SETUP & CONFIGURATION ----
+# ______________________________________________________________________________
 # Purpose: Load required packages, define color palettes, and read Kobo API credentials
 # Output: Environment prepared for data processing
-# ================================================================================
+# ______________________________________________________________________________
 
 # Load required packages
 library(tidyverse)
@@ -43,12 +43,12 @@ mapping_file_path <- here("data", "Kobo version_02-Feb-2026.xlsx")
 
 config <- read_yaml(kobo_config_path)
 
-# ================================================================================
-# SECTION 2: DATA DOWNLOAD - HOUSEHOLD LEVEL
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 2: DATA DOWNLOAD - HOUSEHOLD LEVEL ----
+# ______________________________________________________________________________
 # Purpose: Download household-level data from Kobo using Export API with English labels
 # Output: Raw household dataset (~371 rows) with boolean indicators for multi-select questions
-# ================================================================================
+# ______________________________________________________________________________
 
 # Create export task for household data
 # Step 1: Create export task
@@ -126,12 +126,12 @@ message(glue("Downloaded {nrow(wash_data)} household-level submissions"))
 # Clean up temp file
 unlink(temp_file)
 
-# ================================================================================
-# SECTION 3: DATA PROCESSING - HOUSEHOLD LEVEL
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 3: DATA PROCESSING - HOUSEHOLD LEVEL ----
+# ______________________________________________________________________________
 # Purpose: Clean, standardize, and transform household-level data for analysis
 # Output: Processed household dataset with consent filtering, unified columns, and clean names
-# ================================================================================
+# ______________________________________________________________________________
 
 # Standardize column names to lowercase with underscores
 names(wash_data) <- make_clean_names(names(wash_data))
@@ -159,7 +159,7 @@ mapping <- setNames(
 wash_data <- wash_data %>%
   mutate(across(where(is.character), ~ coalesce(mapping[.x], .x)))
 
-# Fix multiple_select summary column separators (space → semicolon) -----
+## ---- Fix multiple_select summary column separators (space → semicolon) -----
 # The Kobo API uses space to separate multiple selected options in summary columns.
 # Since option labels themselves contain spaces (e.g., "Public tap"), we need to
 # intelligently replace only the spaces BETWEEN options, not within option labels.
@@ -192,7 +192,7 @@ if (length(summary_cols) > 0) {
     }))
 }
 
-# Process binary → multi-select pairs -----
+## ---- Process binary → multi-select pairs -----
 # Convert "No" answers in binary questions to unified multi-select options
 
 # Define all binary → multi-select pairs
@@ -244,7 +244,7 @@ for (i in seq_len(nrow(binary_multiselect_pairs))) {
   }
 }
 
-# Process single-select fill operations -----
+## ---- Process single-select fill operations -----
 # Replace generic "Yes" with specific details and fill downstream columns
 
 # Step 1 & 2: Latrine damaged question
@@ -279,14 +279,14 @@ if (all(c(latrine_col, specify_col, use_another_col) %in% names(wash_data))) {
   message(glue("Processed single-select fill: {latrine_col} (Yes → {specify_col}) → {use_another_col}"))
 }
 
-# Clean string values (remove control characters, prevent Excel issues) -----
+## ---- Clean string values (remove control characters, prevent Excel issues) -----
 wash_data <- wash_data %>%
   mutate(across(where(is.character), ~ {
     cleaned <- str_replace_all(.x, "[\\x00-\\x1f]", "")
     str_trunc(cleaned, width = 32000, ellipsis = "...")
   }))
 
-# Data cleaning and filtering -----
+## ---- Data cleaning and filtering -----
 
 # Columns to remove: Kobo metadata and survey administration fields
 cols_to_remove <- c(
@@ -338,12 +338,12 @@ wash_data <- wash_data %>%
 
 message(glue("After filtering: {nrow(wash_data)} consented households"))
 
-# ================================================================================
-# SECTION 4: OPTIONAL - ARABIC CONTENT INTEGRATION
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 4: OPTIONAL - ARABIC CONTENT INTEGRATION ----
+# ______________________________________________________________________________
 # Purpose: Replace Arabic free-text columns with pre-translated English content
 # Output: Household dataset with English translations (if translation file exists)
-# ================================================================================
+# ______________________________________________________________________________
 # File: data/wash_survey_arabic_content_final.xlsx
 # Structure: index + 18 Arabic columns + 18 _en translation columns
 # If file missing, original Arabic content is preserved
@@ -407,12 +407,12 @@ if (file.exists(translation_file)) {
   message("Translation file not found: keeping original Arabic content\n")
 }
 
-# ================================================================================
-# SECTION 5: DATA DOWNLOAD & PROCESSING - CONTAINER LEVEL
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 5: DATA DOWNLOAD & PROCESSING - CONTAINER LEVEL ----
+# ______________________________________________________________________________
 # Purpose: Download container repeat group data, expand nested records, and create container dataset
 # Output: Container-level dataset (867 rows × 23 columns) with household context
-# ================================================================================
+# ______________________________________________________________________________
 # Note: Export API does not expand repeat groups, so we use /data.json endpoint
 
 message("\n=== Downloading container-level data ===")
@@ -588,7 +588,7 @@ saveRDS(wash_data_container, here("output", "wash_survey_container_level.rds"))
 message(glue("Saved: output/wash_survey_container_level.xlsx"))
 message(glue("       {nrow(wash_data_container)} containers × {ncol(wash_data_container)} columns\n"))
 
-# ---- Extract Arabic Content Columns ----
+## ---- Extract Arabic Content Columns ----
 # Purpose: Separate Arabic free-text responses for translation/review
 # Columns: if_other*, if_others*, comments*, hh_fc_7_1_is_there_anything_else*
 # Output: output/wash_survey_arabic_content.xlsx
@@ -659,18 +659,18 @@ if (length(arabic_cols) == 0) {
   message("\nSkipping Arabic content extraction (using pre-translated content)")
 }
 
-# ================================================================================
-# SECTION 6: SURVEY-WEIGHTED ANALYSIS - WATER INDICATORS
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 6: SURVEY-WEIGHTED ANALYSIS - WATER INDICATORS ----
+# ______________________________________________________________________________
 # Purpose: Calculate survey-weighted estimates for Water Supply indicators (1.1-1.9)
 # Output: Excel file with 7 indicator sheets and 7 PNG plots
-# ================================================================================
+# ______________________________________________________________________________
 
 # Load survey analysis package
 library(srvyr)
 message("\n=== Starting survey-weighted analysis for Water Supply indicators ===")
 
-# ---- Data Preparation for Survey Analysis ----
+## ---- Data Preparation for Survey Analysis ----
 
 #' Convert boolean indicator columns to numeric (0/1)
 #'
@@ -751,7 +751,7 @@ dir.create(here("output", "plots"), recursive = TRUE, showWarnings = FALSE)
 
 message(glue("  Survey design created: {nrow(wash_data)} households, effective n ≈ {round(nrow(wash_data) / 2.0, 1)}"))
 
-# ---- Helper Function: Standardized WASH Indicator Plots ----
+## ---- Helper Function: Standardized WASH Indicator Plots ----
 
 #' Create standardized horizontal bar plot for WASH indicators
 #'
@@ -808,7 +808,7 @@ create_bar_plot <- function(data, x_var, y_var, title, subtitle,
   return(p)
 }
 
-# ---- Indicator 1.1: Primary Drinking Water Source ----
+## ---- Indicator 1.1: Primary Drinking Water Source ----
 
 indicator_1.1 <- tryCatch({
   results_1.1 <- survey_design %>%
@@ -848,7 +848,7 @@ indicator_1.1 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 1.2: Water Sufficiency for Drinking/Cooking ----
+## ---- Indicator 1.2: Water Sufficiency for Drinking/Cooking ----
 
 indicator_1.2 <- tryCatch({
   results_1.2 <- survey_design %>%
@@ -911,7 +911,7 @@ indicator_1.2 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 1.2.1: Water Sufficiency for Other Domestic Purposes ----
+## ---- Indicator 1.2.1: Water Sufficiency for Other Domestic Purposes ----
 
 indicator_1.2.1 <- tryCatch({
   results_1.2.1 <- survey_design %>%
@@ -1050,7 +1050,7 @@ indicator_1.2.1 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 1.3: Water Access Problems ----
+## ---- Indicator 1.3: Water Access Problems ----
 
 indicator_1.3 <- tryCatch({
   # Include ALL problem columns including "no" (exclude only parent and "don't know")
@@ -1101,7 +1101,7 @@ indicator_1.3 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 1.4: Coping Mechanisms ----
+## ---- Indicator 1.4: Coping Mechanisms ----
 
 indicator_1.4 <- tryCatch({
   coping_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_ws_1_2_2_")] %>%
@@ -1150,7 +1150,7 @@ indicator_1.4 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 1.6: Time to Fetch Water (Categorical) ----
+## ---- Indicator 1.6: Time to Fetch Water (Categorical) ----
 
 indicator_1.6 <- tryCatch({
   fetch_cols <- names(wash_data)[str_detect(names(wash_data), "^hh_ws_1_2_3_")] %>%
@@ -1262,7 +1262,7 @@ indicator_1.6 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 1.9: FRC Levels ----
+## ---- Indicator 1.9: FRC Levels ----
 
 indicator_1.9 <- tryCatch({
   results_1.9 <- survey_design %>%
@@ -1368,7 +1368,7 @@ indicator_1.9 <- tryCatch({
   return(NULL)
 })
 
-# ---- Export Results to Excel ----
+## ---- Export Results to Excel ----
 
 message("\n=== Exporting results to Excel ===")
 
@@ -1390,16 +1390,16 @@ write_xlsx(indicator_sheets, path = output_file)
 message(glue("  Saved: {basename(output_file)} ({length(indicator_sheets)} sheets)"))
 message(glue("  Plots: output/plots/water_indicator_*.png ({length(indicator_sheets)} files)\n"))
 
-# ================================================================================
-# SECTION 7: SURVEY-WEIGHTED ANALYSIS - SANITATION INDICATORS
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 7: SURVEY-WEIGHTED ANALYSIS - SANITATION INDICATORS ----
+# ______________________________________________________________________________
 # Purpose: Calculate survey-weighted estimates for Sanitation indicators (2.1-3.0)
 # Output: Excel file with 10 indicator sheets and 12 PNG plots
-# ================================================================================
+# ______________________________________________________________________________
 
 message("\n=== Processing Sanitation Indicators ===\n")
 
-# ---- Data Preparation for Sanitation Analysis ----
+## ---- Data Preparation for Sanitation Analysis ----
 
 # Convert sanitation boolean columns to numeric
 wash_data <- convert_boolean_columns(wash_data, c(
@@ -1411,7 +1411,7 @@ wash_data <- convert_boolean_columns(wash_data, c(
 # Recreate survey design with updated data
 survey_design <- create_survey_design(wash_data)
 
-# ---- Indicator 2.1: Sanitation Facility Type ----
+## ---- Indicator 2.1: Sanitation Facility Type ----
 
 indicator_2.1 <- tryCatch({
 
@@ -1460,7 +1460,7 @@ indicator_2.1 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 2.2: Sanitation Facility Sharing ----
+## ---- Indicator 2.2: Sanitation Facility Sharing ----
 
 indicator_2.2 <- tryCatch({
 
@@ -1543,7 +1543,7 @@ indicator_2.2 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 2.3: Sanitation Problems ----
+## ---- Indicator 2.3: Sanitation Problems ----
 
 indicator_2.3 <- tryCatch({
 
@@ -1591,7 +1591,7 @@ indicator_2.3 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 2.4: Sanitation Coping Mechanisms ----
+## ---- Indicator 2.4: Sanitation Coping Mechanisms ----
 
 indicator_2.4 <- tryCatch({
 
@@ -1640,7 +1640,7 @@ indicator_2.4 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 2.5: Feeling Unsafe at Sanitation Facilities ----
+## ---- Indicator 2.5: Feeling Unsafe at Sanitation Facilities ----
 
 indicator_2.5 <- tryCatch({
 
@@ -1701,7 +1701,7 @@ indicator_2.5 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 2.6: Observed Open Defecation ----
+## ---- Indicator 2.6: Observed Open Defecation ----
 
 # 2.6a: Overall observation prevalence
 indicator_2.6a <- tryCatch({
@@ -1856,7 +1856,7 @@ indicator_2.6c <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 2.7: Children <5 Defecation Practices ----
+## ---- Indicator 2.7: Children <5 Defecation Practices ----
 
 indicator_2.7 <- tryCatch({
 
@@ -1925,7 +1925,7 @@ indicator_2.7 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 2.8: Damaged/Non-functional Latrines ----
+## ---- Indicator 2.8: Damaged/Non-functional Latrines ----
 
 indicator_2.8 <- tryCatch({
 
@@ -1987,7 +1987,7 @@ indicator_2.8 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 2.9: Visible Human Feces ----
+## ---- Indicator 2.9: Visible Human Feces ----
 
 indicator_2.9 <- tryCatch({
 
@@ -2062,7 +2062,7 @@ indicator_2.9 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 3.0: Solid Waste Disposal ----
+## ---- Indicator 3.0: Solid Waste Disposal ----
 
 indicator_3.0 <- tryCatch({
 
@@ -2111,7 +2111,7 @@ indicator_3.0 <- tryCatch({
   return(NULL)
 })
 
-# ---- Export Sanitation Results to Excel ----
+## ---- Export Sanitation Results to Excel ----
 
 message("\n=== Exporting Sanitation results to Excel ===")
 
@@ -2138,12 +2138,12 @@ write_xlsx(sanitation_sheets, path = output_file_san)
 message(glue("  Saved: {basename(output_file_san)} ({length(sanitation_sheets)} sheets)"))
 message(glue("  Plots: output/plots/sanitation_indicator_*.png ({length(sanitation_sheets)} files)\n"))
 
-# ================================================================================
-# SECTION 8: SURVEY-WEIGHTED ANALYSIS - HYGIENE INDICATORS
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 8: SURVEY-WEIGHTED ANALYSIS - HYGIENE INDICATORS ----
+# ______________________________________________________________________________
 # Purpose: Calculate survey-weighted estimates for Hygiene indicators (4.1-4.11)
 # Output: Excel file with 9 indicator sheets and 9 PNG plots
-# ================================================================================
+# ______________________________________________________________________________
 
 message("\n=== Processing Table 2 (continued): Hygiene Indicators ===\n")
 
@@ -2157,7 +2157,7 @@ wash_data <- convert_boolean_columns(wash_data, c(
 # Recreate survey design with updated data
 survey_design <- create_survey_design(wash_data)
 
-# ---- Indicator 4.1: Hygiene NFI Problems ----
+## ---- Indicator 4.1: Hygiene NFI Problems ----
 
 indicator_4.1 <- tryCatch({
 
@@ -2206,7 +2206,7 @@ indicator_4.1 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 4.2: Hygiene NFI Coping Mechanisms ----
+## ---- Indicator 4.2: Hygiene NFI Coping Mechanisms ----
 
 indicator_4.2 <- tryCatch({
 
@@ -2256,7 +2256,7 @@ indicator_4.2 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 4.3: Hygiene Spending Categories ----
+## ---- Indicator 4.3: Hygiene Spending Categories ----
 
 indicator_4.3 <- tryCatch({
 
@@ -2356,11 +2356,11 @@ indicator_4.3 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 4.4: SKIP (Data Gap) ----
+## ---- Indicator 4.4: SKIP (Data Gap) ----
 # Barriers to WASH NFI in market not collected as a dedicated question.
 # Partial data may exist in 4.1 problem types (market-related barriers).
 
-# ---- Indicator 4.5: Satisfaction with Hygiene NFI Access ----
+## ---- Indicator 4.5: Satisfaction with Hygiene NFI Access ----
 
 indicator_4.5 <- tryCatch({
 
@@ -2456,7 +2456,7 @@ indicator_4.5 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 4.6: Handwashing Device Access ----
+## ---- Indicator 4.6: Handwashing Device Access ----
 
 indicator_4.6 <- tryCatch({
 
@@ -2504,7 +2504,7 @@ indicator_4.6 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicators 4.7 & 4.8: Water and Soap at Handwashing (Combined) ----
+## ---- Indicators 4.7 & 4.8: Water and Soap at Handwashing (Combined) ----
 
 indicator_4.7_4.8 <- tryCatch({
 
@@ -2561,7 +2561,7 @@ indicator_4.7_4.8 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 4.9.1: Soap at Home ----
+## ---- Indicator 4.9.1: Soap at Home ----
 
 indicator_4.9.1 <- tryCatch({
 
@@ -2618,7 +2618,7 @@ indicator_4.9.1 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 4.9.2: Barriers to Soap Access ----
+## ---- Indicator 4.9.2: Barriers to Soap Access ----
 
 indicator_4.9.2 <- tryCatch({
 
@@ -2682,12 +2682,12 @@ indicator_4.9.2 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 4.10: SKIP (Data Gap) ----
+## ---- Indicator 4.10: SKIP (Data Gap) ----
 # Critical handwashing times knowledge not collected in survey.
 # Would require question about when respondents wash hands (before eating,
 # before food preparation, after defecation, etc.)
 
-# ---- Indicator 4.11: Menstrual Material Sufficiency ----
+## ---- Indicator 4.11: Menstrual Material Sufficiency ----
 
 indicator_4.11 <- tryCatch({
 
@@ -2784,7 +2784,7 @@ indicator_4.11 <- tryCatch({
   return(NULL)
 })
 
-# ---- Hygiene Excel Export ----
+### ---- Hygiene Excel Export ----
 
 hygiene_sheets <- list(
   "4.1 NFI Problems" = indicator_4.1,
@@ -2806,31 +2806,31 @@ write_xlsx(hygiene_sheets, path = output_file_hyg)
 message(glue("  Saved: {basename(output_file_hyg)} ({length(hygiene_sheets)} sheets)"))
 message(glue("  Plots: output/plots/hygiene_indicator_*.png ({length(hygiene_sheets)} files)\n"))
 
-# ================================================================================
-# SECTION 9: SURVEY-WEIGHTED ANALYSIS - PUBLIC HEALTH INDICATOR
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 9: SURVEY-WEIGHTED ANALYSIS - PUBLIC HEALTH INDICATOR ----
+# ______________________________________________________________________________
 # Purpose: Public Health indicator (5.1) - DATA GAP (morbidity not collected)
 # Output: None (skipped)
-# ================================================================================
+# ______________________________________________________________________________
 
 message("\n=== Processing Public Health Indicator ===\n")
 
-# ---- Indicator 5.1: SKIP (Data Gap) ----
+### ---- Indicator 5.1: SKIP (Data Gap) ----
 # WASH-related morbidity data (diarrhea, skin infections, eye infections, etc.)
 # not collected in this survey. Would require question about household members
 # experiencing WASH-related health issues in the past 30 days.
 message("  [SKIP] Indicator 5.1: WASH-related morbidity not collected in survey\n")
 
-# ================================================================================
-# SECTION 10: SURVEY-WEIGHTED ANALYSIS - PRIORITIES INDICATORS
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 10: SURVEY-WEIGHTED ANALYSIS - PRIORITIES INDICATORS ----
+# ______________________________________________________________________________
 # Purpose: Calculate survey-weighted estimates for Priorities indicators (7.1-7.2)
 # Output: Excel file with 2 indicator sheets and 2 PNG plots
-# ================================================================================
+# ______________________________________________________________________________
 
 message("\n=== Processing Priorities Indicators ===\n")
 
-# ---- Indicator 7.1: Main Priority Concerns ----
+## ---- Indicator 7.1: Main Priority Concerns ----
 
 indicator_7.1 <- tryCatch({
 
@@ -2887,7 +2887,7 @@ indicator_7.1 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 7.2: Preferred Interventions ----
+## ---- Indicator 7.2: Preferred Interventions ----
 
 indicator_7.2 <- tryCatch({
 
@@ -2951,7 +2951,7 @@ indicator_7.2 <- tryCatch({
   return(NULL)
 })
 
-# ---- Priorities Excel Export ----
+## ---- Priorities Excel Export ----
 
 priorities_sheets <- list(
   "7.1 Priority Concerns" = indicator_7.1,
@@ -2966,16 +2966,16 @@ write_xlsx(priorities_sheets, path = output_file_pri)
 message(glue("  Saved: {basename(output_file_pri)} ({length(priorities_sheets)} sheets)"))
 message(glue("  Plots: output/plots/priorities_indicator_*.png ({length(priorities_sheets)} files)\n"))
 
-# ================================================================================
-# SECTION 11: SURVEY-WEIGHTED ANALYSIS - DISAGGREGATION INDICATORS
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 11: SURVEY-WEIGHTED ANALYSIS - DISAGGREGATION INDICATORS ----
+# ______________________________________________________________________________
 # Purpose: Calculate survey-weighted estimates for Table 1 disaggregation indicators
 # Output: Excel file with 9 indicator sheets and 10 PNG plots
-# ================================================================================
+# ______________________________________________________________________________
 
 message("\n=== Processing Table 1: Disaggregation Indicators ===\n")
 
-# ---- Data Cleaning: Handle Outliers in Elderly Count Fields ----
+## ---- Data Cleaning: Handle Outliers in Elderly Count Fields ----
 
 wash_data <- wash_data %>%
   mutate(
@@ -2991,7 +2991,7 @@ wash_data <- wash_data %>%
     )
   )
 
-# ---- Derive Binary Indicators ----
+## ---- Derive Binary Indicators ----
 
 wash_data <- wash_data %>%
   mutate(
@@ -3027,7 +3027,7 @@ wash_data <- wash_data %>%
     )
   )
 
-# ---- Recreate Survey Design with Updated Data ----
+## ---- Recreate Survey Design with Updated Data ----
 
 survey_design <- wash_data %>%
   as_survey_design(
@@ -3037,7 +3037,7 @@ survey_design <- wash_data %>%
     nest = TRUE
   )
 
-# ---- Indicator 1: Camp Distribution ----
+## ---- Indicator 1: Camp Distribution ----
 
 indicator_1 <- tryCatch({
   results_1 <- survey_design %>%
@@ -3090,7 +3090,7 @@ indicator_1 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 2: Respondent Gender ----
+## ---- Indicator 2: Respondent Gender ----
 
 indicator_2 <- tryCatch({
   results_2 <- survey_design %>%
@@ -3128,7 +3128,7 @@ indicator_2 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 3a: Household Head Age Distribution ----
+## ---- Indicator 3a: Household Head Age Distribution ----
 
 indicator_3a <- tryCatch({
   age_stats <- survey_design %>%
@@ -3174,7 +3174,7 @@ indicator_3a <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 3b: Household Head Gender ----
+## ---- Indicator 3b: Household Head Gender ----
 
 indicator_3b <- tryCatch({
   results_3b <- survey_design %>%
@@ -3212,7 +3212,7 @@ indicator_3b <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 4: Recent Arrivals ----
+## ---- Indicator 4: Recent Arrivals ----
 
 indicator_4 <- tryCatch({
   results_4 <- survey_design %>%
@@ -3250,7 +3250,7 @@ indicator_4 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 5: Households with Children Under 5 ----
+## ---- Indicator 5: Households with Children Under 5 ----
 
 indicator_5 <- tryCatch({
   results_5 <- survey_design %>%
@@ -3288,7 +3288,7 @@ indicator_5 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 6: Households with Elderly (60+) ----
+## ---- Indicator 6: Households with Elderly (60+) ----
 
 indicator_6 <- tryCatch({
   results_6 <- survey_design %>%
@@ -3326,7 +3326,7 @@ indicator_6 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 7: Households with Disabled Members ----
+## ---- Indicator 7: Households with Disabled Members ----
 
 indicator_7 <- tryCatch({
   results_7 <- survey_design %>%
@@ -3364,7 +3364,7 @@ indicator_7 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 8: Households with Pregnant/Lactating Women ----
+## ---- Indicator 8: Households with Pregnant/Lactating Women ----
 
 indicator_8 <- tryCatch({
   results_8 <- survey_design %>%
@@ -3402,7 +3402,7 @@ indicator_8 <- tryCatch({
   return(NULL)
 })
 
-# ---- Indicator 9: Households with Children Receiving Malnutrition Treatment ----
+## ---- Indicator 9: Households with Children Receiving Malnutrition Treatment ----
 
 indicator_9 <- tryCatch({
   results_9 <- survey_design %>%
@@ -3440,7 +3440,7 @@ indicator_9 <- tryCatch({
   return(NULL)
 })
 
-# ---- Export Disaggregation Indicators to Excel ----
+## ---- Export Disaggregation Indicators to Excel ----
 
 message("\n=== Exporting disaggregation indicators to Excel ===")
 
@@ -3465,12 +3465,12 @@ write_xlsx(disaggregation_sheets, path = disagg_output_file)
 message(glue("  Saved: {basename(disagg_output_file)} ({length(disaggregation_sheets)} sheets)"))
 message(glue("  Plots: output/plots/disaggregation_indicator_*.png (10 files)\n"))
 
-# ================================================================================
-# SECTION 12: FINAL OUTPUT & SUMMARY
-# ================================================================================
+# ______________________________________________________________________________
+# SECTION 12: FINAL OUTPUT & SUMMARY ----
+# ______________________________________________________________________________
 # Purpose: Save final household and container datasets, display summary statistics
 # Output: wash_survey_hh_level.xlsx/rds and wash_survey_container_level.xlsx
-# ================================================================================
+# ______________________________________________________________________________
 
 # Create output directory and save final datasets
 output_dir <- here("output")

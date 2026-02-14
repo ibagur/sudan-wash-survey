@@ -530,6 +530,32 @@ for (item in items) {
 }
 ```
 
+### Code Section Headers for RStudio Navigation
+
+Use RStudio-compatible section headers with minimum 4 dashes to enable code folding and outline navigation:
+
+**Main sections** (top-level in outline):
+```r
+# ______________________________________________________________________________
+# SECTION 1: DESCRIPTIVE TITLE ----
+# ______________________________________________________________________________
+# Purpose: What this section does
+# Output: What it produces
+# ______________________________________________________________________________
+```
+
+**Subsections** (nested in outline):
+```r
+## ---- Subsection Title ----
+```
+
+**Function headers** (also appear in outline):
+```r
+## ---- Helper Function: Function Purpose ----
+```
+
+This creates a navigable structure in RStudio's document outline panel and enables code section folding.
+
 ## Key Analysis Considerations
 
 ### Sphere Standards Comparison
