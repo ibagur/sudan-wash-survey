@@ -1,22 +1,11 @@
-# Kobo Data Retrieval - Dual-Level Processing
-# Purpose: Download WASH survey data from KoboToolbox (household + container levels)
-# Date: 2026-02-05
-#
-# Output:
-# 1. Household-level dataset (~369 rows) via Export API
-#    - English column labels (via lang = "English (en)")
-#    - Multiple_select summary columns + boolean indicators (via multi_sel = "both")
-#    - Optional: Arabic free-text columns replaced with English translations
-#               if data/wash_survey_arabic_content_final.xlsx exists
-#
-# 2. Container-level dataset (~882 rows) via /data.json endpoint
-#    - Expanded container_repeat groups
-#    - All household context fields included
-#    - Multiple_select processing done inline
-#
-# Approach: Dual-source strategy to get both analytical levels
+# ================================================================================
+# SECTION 1: SETUP & CONFIGURATION
+# ================================================================================
+# Purpose: Load required packages, define color palettes, and read Kobo API credentials
+# Output: Environment prepared for data processing
+# ================================================================================
 
-# Libraries -----
+# Load required packages
 library(tidyverse)
 library(httr)
 library(yaml)
@@ -27,7 +16,7 @@ library(glue)
 library(janitor)
 library(jsonlite)  # Parse JSON from /data.json endpoint
 
-# Color palettes Global WASH Cluster - RESTRICTED PALETTE
+# Define Global WASH Cluster color palettes for standardized visualizations
 GWC_PALETTE_PRIMARY <- "#009999"  # Teal (all indicators)
 GWC_PALETTE_SECONDARY <- "#e36159"  # Red (negatives, Sphere violations)
 GWC_PALETTE_NEUTRAL <- "#bdbdbd"  # Grey (neutral/don't know)
@@ -48,16 +37,24 @@ GWC_LIKERT_5 <- c(
   very_positive = "#009999"
 )
 
-# Configuration -----
+# Read Kobo API credentials and file paths from configuration
 kobo_config_path <- here("config.yaml")
 mapping_file_path <- here("data", "Kobo version_02-Feb-2026.xlsx")
 
 config <- read_yaml(kobo_config_path)
 
-# Download household-level data using Kobo Export API -----
+# ================================================================================
+# SECTION 2: DATA DOWNLOAD - HOUSEHOLD LEVEL
+# ================================================================================
+# Purpose: Download household-level data from Kobo using Export API with English labels
+# Output: Raw household dataset (~371 rows) with boolean indicators for multi-select questions
+# ================================================================================
+
+# Create export task for household data
 # Step 1: Create export task
 export_url <- glue("https://{config$kobo$url}/api/v2/assets/{config$kobo$asset_id}/exports/")
 
+# Send POST request to Kobo API to initiate export
 export_response <- POST(
   export_url,
   authenticate(config$kobo$user, config$kobo$password, type = "basic"),
@@ -80,6 +77,7 @@ export_data <- content(export_response)
 export_uid <- export_data$uid
 message(glue("Export task created: {export_uid}"))
 
+# Poll export status until ready or timeout
 # Step 2: Wait for export to complete and get download URL
 max_attempts <- 30
 attempt <- 1
@@ -109,6 +107,7 @@ if (!export_ready) {
   stop("Export did not complete within expected time")
 }
 
+# Download exported file to temporary location
 # Step 3: Download the file
 temp_file <- tempfile(fileext = ".xlsx")
 download_response <- GET(
@@ -127,11 +126,14 @@ message(glue("Downloaded {nrow(wash_data)} household-level submissions"))
 # Clean up temp file
 unlink(temp_file)
 
-# ==============================================================================
-# HOUSEHOLD DATA PROCESSING - Clean HH-level data first
-# ==============================================================================
+# ================================================================================
+# SECTION 3: DATA PROCESSING - HOUSEHOLD LEVEL
+# ================================================================================
+# Purpose: Clean, standardize, and transform household-level data for analysis
+# Output: Processed household dataset with consent filtering, unified columns, and clean names
+# ================================================================================
 
-# Clean column names to lowercase with underscores -----
+# Standardize column names to lowercase with underscores
 names(wash_data) <- make_clean_names(names(wash_data))
 
 # Create index lookup for linking to container data (BEFORE removing any columns)
@@ -144,15 +146,16 @@ if ("id" %in% names(wash_data)) {
   stop("id column not found - cannot create index lookup for container data")
 }
 
-# Load survey definitions for value mapping -----
+# Load survey definitions for value mapping
 choices_def <- read_excel(mapping_file_path, sheet = "choices")
 
-# Apply value mapping for select_one questions (safety fallback) -----
+# Map Kobo choice codes to English labels for select_one questions
 mapping <- setNames(
   choices_def[["label::English (en)"]],
   choices_def[["name"]]
 )
 
+# Apply value mapping to all character columns
 wash_data <- wash_data %>%
   mutate(across(where(is.character), ~ coalesce(mapping[.x], .x)))
 
@@ -164,7 +167,7 @@ wash_data <- wash_data %>%
 # Strategy: Replace spaces that are followed by a capital letter (start of next option)
 # Example: "Public tap Water truck" → "Public tap; Water truck"
 
-# Identify multiple_select summary columns by finding columns with boolean indicators
+# Identify multi-select summary columns (have corresponding boolean columns)
 all_cols <- names(wash_data)
 
 summary_cols <- all_cols %>%
@@ -204,7 +207,7 @@ binary_multiselect_pairs <- tribble(
   "hh_h_4_2_2_do_you_have_enough_soap_at_household_for_all_purposes", "hh_h_4_3_1_if_applicable_please_tell_me_the_main_reason_why_your_household_does_not_have_soap", "No", "Yes", "yes"
 )
 
-# Process each pair
+# Loop through each pair and create unified boolean columns
 for (i in seq_len(nrow(binary_multiselect_pairs))) {
   pair <- binary_multiselect_pairs[i, ]
 
@@ -313,6 +316,7 @@ wash_data <- wash_data %>%
 # Find where 'id' column starts (metadata begins here) - after previous removals
 id_position <- which(names(wash_data) == "id")
 
+# Apply final data cleaning: remove metadata, filter consent, standardize columns
 wash_data <- wash_data %>%
   # Remove all columns from 'id' onwards (all consecutive metadata at end)
   {if (length(id_position) > 0 && id_position > 0) select(., 1:(id_position - 1)) else .} %>%
@@ -334,10 +338,12 @@ wash_data <- wash_data %>%
 
 message(glue("After filtering: {nrow(wash_data)} consented households"))
 
-# ==============================================================================
-# OPTIONAL: LOAD PRE-TRANSLATED ARABIC CONTENT
-# ==============================================================================
-# Purpose: Replace Arabic free-text columns with English translations
+# ================================================================================
+# SECTION 4: OPTIONAL - ARABIC CONTENT INTEGRATION
+# ================================================================================
+# Purpose: Replace Arabic free-text columns with pre-translated English content
+# Output: Household dataset with English translations (if translation file exists)
+# ================================================================================
 # File: data/wash_survey_arabic_content_final.xlsx
 # Structure: index + 18 Arabic columns + 18 _en translation columns
 # If file missing, original Arabic content is preserved
@@ -349,7 +355,7 @@ if (file.exists(translation_file)) {
 
   message("\nLoading pre-translated Arabic content...")
 
-  # Load translation file
+  # Load pre-translated English content from Excel file
   translations <- read_excel(translation_file)
   message(glue("  Loaded: {nrow(translations)} rows × {ncol(translations)} columns"))
 
@@ -389,7 +395,7 @@ if (file.exists(translation_file)) {
     translated_cols <- setdiff(names(translations_clean), "index")
   }
 
-  # Merge translations into wash_data (replace Arabic with English)
+  # Replace Arabic free-text columns with English translations
   wash_data <- wash_data %>%
     rows_update(translations_clean, by = "index", unmatched = "ignore")
 
@@ -401,13 +407,17 @@ if (file.exists(translation_file)) {
   message("Translation file not found: keeping original Arabic content\n")
 }
 
-# ==============================================================================
-# CONTAINER DATA SECTION - Extract repeat group data
-# ==============================================================================
-# Purpose: Download and expand container_repeat group (882 containers)
+# ================================================================================
+# SECTION 5: DATA DOWNLOAD & PROCESSING - CONTAINER LEVEL
+# ================================================================================
+# Purpose: Download container repeat group data, expand nested records, and create container dataset
+# Output: Container-level dataset (867 rows × 23 columns) with household context
+# ================================================================================
 # Note: Export API does not expand repeat groups, so we use /data.json endpoint
 
 message("\n=== Downloading container-level data ===")
+
+# Download raw JSON data from Kobo API
 
 data_json_url <- glue("https://{config$kobo$url}/api/v2/assets/{config$kobo$asset_id}/data.json")
 
@@ -419,6 +429,7 @@ container_response <- GET(
 
 stop_for_status(container_response, task = "download container data")
 
+# Parse JSON response and convert to tibble
 json_text <- content(container_response, as = "text", encoding = "UTF-8")
 parsed <- fromJSON(json_text, flatten = TRUE, simplifyDataFrame = TRUE)
 wash_data_container <- as_tibble(parsed$results)
@@ -433,7 +444,7 @@ if (length(container_cols) == 0) {
   stop("No container_repeat columns found in data")
 }
 
-# Expand the first container repeat column found
+# Expand nested container repeat group into individual container rows
 container_col <- container_cols[1]
 message(glue("Expanding repeat group: {container_col}"))
 
@@ -446,7 +457,7 @@ wash_data_container <- wash_data_container %>%
 
 message(glue("Expanded to {nrow(wash_data_container)} container records"))
 
-# Clean column names: extract leaf names and standardize
+# Extract leaf names from nested paths and standardize formatting
 clean_names <- names(wash_data_container) %>%
   map_chr(~ {
     # Don't transform parent_kobo_id
@@ -464,8 +475,7 @@ if (!exists("choices_def")) {
   choices_def <- read_excel(mapping_file_path, sheet = "choices")
 }
 
-# Process container_use (only select_multiple field we need)
-# Load choices for container_use
+# Convert container_use multi-select from XML codes to English labels
 container_use_choices <- choices_def %>%
   filter(list_name == "container_use") %>%
   select(xml_code = name, english_label = `label::English (en)`)
@@ -529,7 +539,7 @@ wash_data_container <- wash_data_container %>%
   # Convert XML codes to English for select_one fields
   mutate(across(c(any_of(c("container_type", "frequency_filled", "fill_level"))), ~ coalesce(mapping[.x], .x)))
 
-# Convert fill_level to numeric (replace character column)
+# Convert fill_level symbols to numeric values for calculations
 wash_data_container <- wash_data_container %>%
   mutate(
     fill_level = case_when(
@@ -543,7 +553,7 @@ wash_data_container <- wash_data_container %>%
 
 message(glue("Converted fill_level to numeric: {sum(!is.na(wash_data_container$fill_level))} non-missing values"))
 
-# Select required household fields from main HH dataset
+# Extract household context fields to join with container data
 hh_context <- wash_data %>%
   select(
     parent_index = index,  # Rename for joining
@@ -571,7 +581,7 @@ wash_data_container <- wash_data_container %>%
 
 message(glue("Container data (consented households only): {nrow(wash_data_container)} rows × {ncol(wash_data_container)} columns"))
 
-# Save container outputs (Excel + RDS)
+# Save container-level dataset in Excel and RDS formats
 write_xlsx(wash_data_container, here("output", "wash_survey_container_level.xlsx"))
 saveRDS(wash_data_container, here("output", "wash_survey_container_level.rds"))
 
@@ -649,30 +659,45 @@ if (length(arabic_cols) == 0) {
   message("\nSkipping Arabic content extraction (using pre-translated content)")
 }
 
-# ==============================================================================
-# SURVEY-WEIGHTED ANALYSIS: WATER SUPPLY INDICATORS
-# ==============================================================================
+# ================================================================================
+# SECTION 6: SURVEY-WEIGHTED ANALYSIS - WATER INDICATORS
+# ================================================================================
+# Purpose: Calculate survey-weighted estimates for Water Supply indicators (1.1-1.9)
+# Output: Excel file with 7 indicator sheets and 7 PNG plots
+# ================================================================================
 
+# Load survey analysis package
 library(srvyr)
 message("\n=== Starting survey-weighted analysis for Water Supply indicators ===")
 
 # ---- Data Preparation for Survey Analysis ----
 
-# Convert boolean columns to numeric (handle mixed integer 0/1 and character "0"/"1")
-wash_data <- wash_data %>%
-  mutate(across(
-    c(starts_with("if_yes_follow_with_the_list_"),
-      starts_with("hh_ws_1_2_2_"),
-      starts_with("hh_ws_1_2_3_")),
-    ~ case_when(
-      is.numeric(.x) ~ as.numeric(.x),
-      .x == "1" ~ 1,
-      .x == "0" ~ 0,
-      TRUE ~ NA_real_
-    )
-  ))
+#' Convert boolean indicator columns to numeric (0/1)
+#'
+#' Uses a guarded approach to only convert columns that are actually
+#' boolean-like (numeric or character "0"/"1"), preventing accidental
+#' destruction of text columns that share the same prefix.
+#'
+#' @param data Data frame to process
+#' @param prefixes Character vector of column name prefixes to check
+#' @return Data frame with boolean columns converted to numeric
+convert_boolean_columns <- function(data, prefixes) {
+  data %>%
+    mutate(across(
+      starts_with(prefixes) &
+        where(~ is.numeric(.x) || (is.character(.x) && all(na.omit(.x) %in% c("0", "1")))),
+      ~ as.numeric(.x)
+    ))
+}
 
-# Calculate post-stratification weights
+# Convert water boolean columns to numeric (SAFE approach with where() guard)
+wash_data <- convert_boolean_columns(wash_data, c(
+  "if_yes_follow_with_the_list_",
+  "hh_ws_1_2_2_",
+  "hh_ws_1_2_3_"
+))
+
+# Calculate post-stratification weights based on actual camp populations
 camp_pops <- tibble(
   camp_name = c("Camp A", "Camp B", "Camp C", "Camp D"),
   pop_n = c(20142, 21000, 12504, 42050)
@@ -698,28 +723,55 @@ wash_data <- wash_data %>%
   ) %>%
   ungroup()
 
-# Create survey design object (nest=TRUE because clusters are numbered within camps)
-survey_design <- wash_data %>%
-  as_survey_design(
-    strata = camp_name,
-    ids = pseudo_cluster,
-    weights = weight,
-    nest = TRUE
-  )
+#' Create survey design object for Tawila WASH analysis
+#'
+#' Uses pseudo-clusters based on camp + age groups, with equal weights
+#' due to self-weighting proportional allocation design.
+#'
+#' @param data Household-level data frame with required columns:
+#'   - camp_name (strata)
+#'   - pseudo_cluster (cluster IDs)
+#'   - weight (sampling weights, all = 1)
+#' @return Survey design object (srvyr::as_survey_design)
+create_survey_design <- function(data) {
+  data %>%
+    as_survey_design(
+      strata = camp_name,
+      ids = pseudo_cluster,
+      weights = weight,
+      nest = TRUE
+    )
+}
+
+# Create survey design object with pseudo-clusters and post-stratification weights
+survey_design <- create_survey_design(wash_data)
 
 # Create output directories
 dir.create(here("output", "plots"), recursive = TRUE, showWarnings = FALSE)
 
 message(glue("  Survey design created: {nrow(wash_data)} households, effective n ≈ {round(nrow(wash_data) / 2.0, 1)}"))
 
-# ---- Helper Function: Standardized Water Indicator Plots ----
+# ---- Helper Function: Standardized WASH Indicator Plots ----
 
-create_water_bar_plot <- function(data, x_var, y_var, title, subtitle,
-                                  x_label = "Percentage of Households",
-                                  fill_color = "#009999",
-                                  reference_line = NULL,
-                                  x_limits = c(0, NA),
-                                  label_position = "none") {
+#' Create standardized horizontal bar plot for WASH indicators
+#'
+#' @param data Data frame with indicator results
+#' @param x_var X-axis variable (percentage, unquoted)
+#' @param y_var Y-axis variable (category, unquoted)
+#' @param title Plot title
+#' @param subtitle Plot subtitle (typically sample size info)
+#' @param x_label X-axis label (default: "Percentage of Households")
+#' @param fill_color Bar fill color (hex code)
+#' @param reference_line Optional reference line value (default: NULL)
+#' @param x_limits X-axis limits (default: c(0, NA))
+#' @param label_position Label placement: "none", "outside", "inside"
+#' @return ggplot2 object
+create_bar_plot <- function(data, x_var, y_var, title, subtitle,
+                            x_label = "Percentage of Households",
+                            fill_color = "#009999",
+                            reference_line = NULL,
+                            x_limits = c(0, NA),
+                            label_position = "none") {
   p <- ggplot(data, aes(x = {{ x_var }}, y = reorder({{ y_var }}, {{ x_var }}))) +
     geom_col(fill = fill_color, width = 0.7) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
@@ -776,7 +828,7 @@ indicator_1.1 <- tryCatch({
     warning("Indicator 1.1: Categories sum to ", round(sum(results_1.1$estimate_pct), 1), "%, expected ~100%")
   }
 
-  plot_1.1 <- create_water_bar_plot(
+  plot_1.1 <- create_bar_plot(
     data = results_1.1,
     x_var = estimate_pct,
     y_var = water_source,
@@ -1027,7 +1079,7 @@ indicator_1.3 <- tryCatch({
     ) %>%
     arrange(desc(estimate_pct))  # Show all categories, sorted by prevalence
 
-  plot_1.3 <- create_water_bar_plot(
+  plot_1.3 <- create_bar_plot(
     data = problem_results,
     x_var = estimate_pct,
     y_var = problem_label,
@@ -1076,7 +1128,7 @@ indicator_1.4 <- tryCatch({
     arrange(desc(estimate_pct)) %>%
     slice_head(n = 10)
 
-  plot_1.4 <- create_water_bar_plot(
+  plot_1.4 <- create_bar_plot(
     data = coping_results,
     x_var = estimate_pct,
     y_var = mechanism_label,
@@ -1338,77 +1390,26 @@ write_xlsx(indicator_sheets, path = output_file)
 message(glue("  Saved: {basename(output_file)} ({length(indicator_sheets)} sheets)"))
 message(glue("  Plots: output/plots/water_indicator_*.png ({length(indicator_sheets)} files)\n"))
 
-# ==============================================================================
-# SANITATION INDICATORS (2.1-3.0) - 10 INDICATORS
-# ==============================================================================
+# ================================================================================
+# SECTION 7: SURVEY-WEIGHTED ANALYSIS - SANITATION INDICATORS
+# ================================================================================
+# Purpose: Calculate survey-weighted estimates for Sanitation indicators (2.1-3.0)
+# Output: Excel file with 10 indicator sheets and 12 PNG plots
+# ================================================================================
 
 message("\n=== Processing Sanitation Indicators ===\n")
 
 # ---- Data Preparation for Sanitation Analysis ----
 
 # Convert sanitation boolean columns to numeric
-# Only convert columns that actually contain 0/1 values (boolean indicators),
-# not parent select_one text columns (Yes/No, Never visible, etc.)
-wash_data <- wash_data %>%
-  mutate(across(
-    c(starts_with("hh_s_"),
-      starts_with("if_yes_select_multiple_"),
-      starts_with("hh_swm_")) &
-      where(~ is.numeric(.x) || (is.character(.x) && all(na.omit(.x) %in% c("0", "1")))),
-    ~ as.numeric(.x)
-  ))
+wash_data <- convert_boolean_columns(wash_data, c(
+  "hh_s_",
+  "if_yes_select_multiple_",
+  "hh_swm_"
+))
 
 # Recreate survey design with updated data
-survey_design <- wash_data %>%
-  as_survey_design(
-    strata = camp_name,
-    ids = pseudo_cluster,
-    weights = weight,
-    nest = TRUE
-  )
-
-# ---- Helper Function: Standardized Sanitation Indicator Plots ----
-
-create_sanitation_bar_plot <- function(data, x_var, y_var, title, subtitle,
-                                       x_label = "Percentage of Households",
-                                       fill_color = "#009999",
-                                       reference_line = NULL,
-                                       x_limits = c(0, NA),
-                                       label_position = "none") {
-  p <- ggplot(data, aes(x = {{ x_var }}, y = reorder({{ y_var }}, {{ x_var }}))) +
-    geom_col(fill = fill_color, width = 0.7) +
-    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
-                  width = 0.3, linewidth = 0.5, color = "#888888") +
-    labs(title = title, subtitle = subtitle, x = x_label, y = NULL) +
-    scale_x_continuous(
-      expand = expansion(mult = c(0, if_else(label_position == "outside", 0.15, 0.1))),
-      limits = x_limits,
-      labels = scales::label_percent(scale = 1)
-    ) +
-    theme_minimal(base_size = 12) +
-    theme(
-      plot.title = element_text(face = "bold", size = 14),
-      plot.subtitle = element_text(color = "grey40", size = 11),
-      panel.grid.major.y = element_blank(),
-      panel.grid.minor = element_blank(),
-      axis.text = element_text(size = 10)
-    )
-
-  if (label_position == "outside") {
-    p <- p + geom_text(aes(label = sprintf("%d%%", {{ x_var }})),
-                       hjust = -0.2, size = 3.5)
-  } else if (label_position == "inside") {
-    p <- p + geom_text(aes(label = sprintf("%d%%", {{ x_var }})),
-                       hjust = 1.1, size = 3.5, color = "white", fontface = "bold")
-  }
-
-  if (!is.null(reference_line)) {
-    p <- p + geom_vline(xintercept = reference_line,
-                       linetype = "dashed", color = "red", linewidth = 0.7)
-  }
-
-  return(p)
-}
+survey_design <- create_survey_design(wash_data)
 
 # ---- Indicator 2.1: Sanitation Facility Type ----
 
@@ -1437,7 +1438,7 @@ indicator_2.1 <- tryCatch({
     ) %>%
     arrange(desc(estimate_pct))
 
-  plot_2.1 <- create_sanitation_bar_plot(
+  plot_2.1 <- create_bar_plot(
     data = facility_results,
     x_var = estimate_pct,
     y_var = facility_label,
@@ -1568,7 +1569,7 @@ indicator_2.3 <- tryCatch({
     ) %>%
     arrange(desc(estimate_pct))
 
-  plot_2.3 <- create_sanitation_bar_plot(
+  plot_2.3 <- create_bar_plot(
     data = problem_results,
     x_var = estimate_pct,
     y_var = problem_label,
@@ -1617,7 +1618,7 @@ indicator_2.4 <- tryCatch({
     ) %>%
     arrange(desc(estimate_pct))
 
-  plot_2.4 <- create_sanitation_bar_plot(
+  plot_2.4 <- create_bar_plot(
     data = coping_results,
     x_var = estimate_pct,
     y_var = coping_label,
@@ -1724,7 +1725,7 @@ indicator_2.6a <- tryCatch({
     mutate(across(c(estimate_pct, ci_lower_pct, ci_upper_pct), round))
 
   plot_2.6a <- ggplot(results_2.6a, aes(x = estimate_pct, y = observed)) +
-    geom_col(fill = "#e36159", width = 0.7) +
+    geom_col(aes(fill = observed), width = 0.7) +
     geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
@@ -1733,6 +1734,10 @@ indicator_2.6a <- tryCatch({
          subtitle = glue("Overall prevalence (n={nrow(wash_data)} households)"),
          x = "Percentage of Households",
          y = NULL) +
+    scale_fill_manual(
+      values = c("Yes" = "#e36159", "No" = "#009999"),
+      guide = "none"
+    ) +
     scale_x_continuous(
       expand = expansion(mult = c(0, 0.15)),
       labels = scales::label_percent(scale = 1)
@@ -1783,7 +1788,7 @@ indicator_2.6b <- tryCatch({
     ) %>%
     arrange(desc(estimate_pct))
 
-  plot_2.6b <- create_sanitation_bar_plot(
+  plot_2.6b <- create_bar_plot(
     data = who_results,
     x_var = estimate_pct,
     y_var = age_label,
@@ -1829,7 +1834,7 @@ indicator_2.6c <- tryCatch({
     ) %>%
     arrange(desc(estimate_pct))
 
-  plot_2.6c <- create_sanitation_bar_plot(
+  plot_2.6c <- create_bar_plot(
     data = when_results,
     x_var = estimate_pct,
     y_var = time_label,
@@ -2084,7 +2089,7 @@ indicator_3.0 <- tryCatch({
     ) %>%
     arrange(desc(estimate_pct))
 
-  plot_3.0 <- create_sanitation_bar_plot(
+  plot_3.0 <- create_bar_plot(
     data = waste_results,
     x_var = estimate_pct,
     y_var = disposal_label,
@@ -2133,74 +2138,24 @@ write_xlsx(sanitation_sheets, path = output_file_san)
 message(glue("  Saved: {basename(output_file_san)} ({length(sanitation_sheets)} sheets)"))
 message(glue("  Plots: output/plots/sanitation_indicator_*.png ({length(sanitation_sheets)} files)\n"))
 
-# ==============================================================================
-# TABLE 2 (CONTINUED): HYGIENE INDICATORS (4.1-4.11)
-# ==============================================================================
+# ================================================================================
+# SECTION 8: SURVEY-WEIGHTED ANALYSIS - HYGIENE INDICATORS
+# ================================================================================
+# Purpose: Calculate survey-weighted estimates for Hygiene indicators (4.1-4.11)
+# Output: Excel file with 9 indicator sheets and 9 PNG plots
+# ================================================================================
 
 message("\n=== Processing Table 2 (continued): Hygiene Indicators ===\n")
 
 # Convert hygiene boolean columns to numeric
-# Guard with where() to only convert actual 0/1 columns (avoids destroying text columns)
-wash_data <- wash_data %>%
-  mutate(across(
-    c(starts_with("hh_h_"),
-      starts_with("if_yes_which_ones_"),
-      starts_with("during_your_last_")) &
-      where(~ is.numeric(.x) || (is.character(.x) && all(na.omit(.x) %in% c("0", "1")))),
-    ~ as.numeric(.x)
-  ))
+wash_data <- convert_boolean_columns(wash_data, c(
+  "hh_h_",
+  "if_yes_which_ones_",
+  "during_your_last_"
+))
 
 # Recreate survey design with updated data
-survey_design <- wash_data %>%
-  as_survey_design(
-    strata = camp_name,
-    ids = pseudo_cluster,
-    weights = weight,
-    nest = TRUE
-  )
-
-# ---- Helper Function: Standardized Hygiene Indicator Plots ----
-
-create_hygiene_bar_plot <- function(data, x_var, y_var, title, subtitle,
-                                    x_label = "Percentage of Households",
-                                    fill_color = "#009999",
-                                    reference_line = NULL,
-                                    x_limits = c(0, NA),
-                                    label_position = "none") {
-  p <- ggplot(data, aes(x = {{ x_var }}, y = reorder({{ y_var }}, {{ x_var }}))) +
-    geom_col(fill = fill_color, width = 0.7) +
-    geom_errorbar(aes(xmin = ci_lower_pct, xmax = ci_upper_pct),
-                  width = 0.3, linewidth = 0.5, color = "#888888") +
-    labs(title = title, subtitle = subtitle, x = x_label, y = NULL) +
-    scale_x_continuous(
-      expand = expansion(mult = c(0, if_else(label_position == "outside", 0.15, 0.1))),
-      limits = x_limits,
-      labels = scales::label_percent(scale = 1)
-    ) +
-    theme_minimal(base_size = 12) +
-    theme(
-      plot.title = element_text(face = "bold", size = 14),
-      plot.subtitle = element_text(color = "grey40", size = 11),
-      panel.grid.major.y = element_blank(),
-      panel.grid.minor = element_blank(),
-      axis.text = element_text(size = 10)
-    )
-
-  if (label_position == "outside") {
-    p <- p + geom_text(aes(label = sprintf("%d%%", {{ x_var }})),
-                       hjust = -0.2, size = 3.5)
-  } else if (label_position == "inside") {
-    p <- p + geom_text(aes(label = sprintf("%d%%", {{ x_var }})),
-                       hjust = 1.1, size = 3.5, color = "white", fontface = "bold")
-  }
-
-  if (!is.null(reference_line)) {
-    p <- p + geom_vline(xintercept = reference_line,
-                       linetype = "dashed", color = "red", linewidth = 0.7)
-  }
-
-  return(p)
-}
+survey_design <- create_survey_design(wash_data)
 
 # ---- Indicator 4.1: Hygiene NFI Problems ----
 
@@ -2229,7 +2184,7 @@ indicator_4.1 <- tryCatch({
     ) %>%
     arrange(desc(estimate_pct))
 
-  plot_4.1 <- create_hygiene_bar_plot(
+  plot_4.1 <- create_bar_plot(
     data = problem_results,
     x_var = estimate_pct,
     y_var = problem_label,
@@ -2279,7 +2234,7 @@ indicator_4.2 <- tryCatch({
     ) %>%
     arrange(desc(estimate_pct))
 
-  plot_4.2 <- create_hygiene_bar_plot(
+  plot_4.2 <- create_bar_plot(
     data = coping_results,
     x_var = estimate_pct,
     y_var = coping_label,
@@ -2527,7 +2482,7 @@ indicator_4.6 <- tryCatch({
              str_to_sentence() %>%
              str_wrap(width = 40))
 
-  plot_4.6 <- create_hygiene_bar_plot(
+  plot_4.6 <- create_bar_plot(
     data = results_device,
     x_var = estimate_pct,
     y_var = device_label,
@@ -2705,7 +2660,7 @@ indicator_4.9.2 <- tryCatch({
     ) %>%
     arrange(desc(estimate_pct))
 
-  plot_4.9.2 <- create_hygiene_bar_plot(
+  plot_4.9.2 <- create_bar_plot(
     data = barrier_results,
     x_var = estimate_pct,
     y_var = barrier_label,
@@ -2851,9 +2806,12 @@ write_xlsx(hygiene_sheets, path = output_file_hyg)
 message(glue("  Saved: {basename(output_file_hyg)} ({length(hygiene_sheets)} sheets)"))
 message(glue("  Plots: output/plots/hygiene_indicator_*.png ({length(hygiene_sheets)} files)\n"))
 
-# ==============================================================================
-# PUBLIC HEALTH INDICATOR (5.1)
-# ==============================================================================
+# ================================================================================
+# SECTION 9: SURVEY-WEIGHTED ANALYSIS - PUBLIC HEALTH INDICATOR
+# ================================================================================
+# Purpose: Public Health indicator (5.1) - DATA GAP (morbidity not collected)
+# Output: None (skipped)
+# ================================================================================
 
 message("\n=== Processing Public Health Indicator ===\n")
 
@@ -2863,9 +2821,12 @@ message("\n=== Processing Public Health Indicator ===\n")
 # experiencing WASH-related health issues in the past 30 days.
 message("  [SKIP] Indicator 5.1: WASH-related morbidity not collected in survey\n")
 
-# ==============================================================================
-# PRIORITIES INDICATORS (7.1-7.2)
-# ==============================================================================
+# ================================================================================
+# SECTION 10: SURVEY-WEIGHTED ANALYSIS - PRIORITIES INDICATORS
+# ================================================================================
+# Purpose: Calculate survey-weighted estimates for Priorities indicators (7.1-7.2)
+# Output: Excel file with 2 indicator sheets and 2 PNG plots
+# ================================================================================
 
 message("\n=== Processing Priorities Indicators ===\n")
 
@@ -3005,9 +2966,12 @@ write_xlsx(priorities_sheets, path = output_file_pri)
 message(glue("  Saved: {basename(output_file_pri)} ({length(priorities_sheets)} sheets)"))
 message(glue("  Plots: output/plots/priorities_indicator_*.png ({length(priorities_sheets)} files)\n"))
 
-# ==============================================================================
-# TABLE 1: DISAGGREGATION INDICATORS (9 INDICATORS)
-# ==============================================================================
+# ================================================================================
+# SECTION 11: SURVEY-WEIGHTED ANALYSIS - DISAGGREGATION INDICATORS
+# ================================================================================
+# Purpose: Calculate survey-weighted estimates for Table 1 disaggregation indicators
+# Output: Excel file with 9 indicator sheets and 10 PNG plots
+# ================================================================================
 
 message("\n=== Processing Table 1: Disaggregation Indicators ===\n")
 
@@ -3143,7 +3107,7 @@ indicator_2 <- tryCatch({
   # Filter to Female only for plot
   plot_data <- results_2 %>% filter(gender == "Female")
   
-  plot_2 <- create_water_bar_plot(
+  plot_2 <- create_bar_plot(
     data = plot_data,
     x_var = estimate_pct,
     y_var = gender,
@@ -3227,7 +3191,7 @@ indicator_3b <- tryCatch({
   # Filter to Female only for plot
   plot_data <- results_3b %>% filter(gender == "Female")
   
-  plot_3b <- create_water_bar_plot(
+  plot_3b <- create_bar_plot(
     data = plot_data,
     x_var = estimate_pct,
     y_var = gender,
@@ -3265,7 +3229,7 @@ indicator_4 <- tryCatch({
   # Filter to Yes only for plot
   plot_data <- results_4 %>% filter(category == "Yes")
   
-  plot_4 <- create_water_bar_plot(
+  plot_4 <- create_bar_plot(
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
@@ -3303,7 +3267,7 @@ indicator_5 <- tryCatch({
   # Filter to Yes only for plot
   plot_data <- results_5 %>% filter(category == "Yes")
   
-  plot_5 <- create_water_bar_plot(
+  plot_5 <- create_bar_plot(
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
@@ -3341,7 +3305,7 @@ indicator_6 <- tryCatch({
   # Filter to Yes only for plot
   plot_data <- results_6 %>% filter(category == "Yes")
   
-  plot_6 <- create_water_bar_plot(
+  plot_6 <- create_bar_plot(
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
@@ -3379,7 +3343,7 @@ indicator_7 <- tryCatch({
   # Filter to Yes only for plot
   plot_data <- results_7 %>% filter(category == "Yes")
   
-  plot_7 <- create_water_bar_plot(
+  plot_7 <- create_bar_plot(
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
@@ -3417,7 +3381,7 @@ indicator_8 <- tryCatch({
   # Filter to Yes only for plot
   plot_data <- results_8 %>% filter(category == "Yes")
   
-  plot_8 <- create_water_bar_plot(
+  plot_8 <- create_bar_plot(
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
@@ -3455,7 +3419,7 @@ indicator_9 <- tryCatch({
   # Filter to Yes only for plot
   plot_data <- results_9 %>% filter(category == "Yes")
   
-  plot_9 <- create_water_bar_plot(
+  plot_9 <- create_bar_plot(
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
@@ -3501,10 +3465,18 @@ write_xlsx(disaggregation_sheets, path = disagg_output_file)
 message(glue("  Saved: {basename(disagg_output_file)} ({length(disaggregation_sheets)} sheets)"))
 message(glue("  Plots: output/plots/disaggregation_indicator_*.png (10 files)\n"))
 
-# ---- Save Main Outputs ----
+# ================================================================================
+# SECTION 12: FINAL OUTPUT & SUMMARY
+# ================================================================================
+# Purpose: Save final household and container datasets, display summary statistics
+# Output: wash_survey_hh_level.xlsx/rds and wash_survey_container_level.xlsx
+# ================================================================================
+
+# Create output directory and save final datasets
 output_dir <- here("output")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
+# Save household-level dataset in Excel and RDS formats
 write_xlsx(wash_data, here("output", "wash_survey_hh_level.xlsx"))
 saveRDS(wash_data, here("output", "wash_survey_hh_level.rds"))
 
