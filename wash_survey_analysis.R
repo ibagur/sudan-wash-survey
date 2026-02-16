@@ -832,7 +832,7 @@ indicator_1.1 <- tryCatch({
     data = results_1.1,
     x_var = estimate_pct,
     y_var = water_source,
-    title = "Indicator 1.1: Primary Drinking Water Source",
+    title = "Primary Drinking Water Source",
     subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
     label_position = "outside"
   )
@@ -883,7 +883,7 @@ indicator_1.2 <- tryCatch({
     geom_text(aes(label = sprintf("%s\n%d%%", category, estimate_pct)),
               position = position_stack(vjust = 0.5), size = 4, color = "white", fontface = "bold") +
     labs(
-      title = "Indicator 1.2: Water Sufficiency for Drinking and Cooking",
+      title = "Water Sufficiency for Drinking and Cooking",
       subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
       x = "Percentage of Households", y = NULL
     ) +
@@ -1017,7 +1017,7 @@ indicator_1.2.1 <- tryCatch({
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
               hjust = -0.2, size = 3.5) +
     labs(
-      title = "Indicator 1.2.1: Water sufficiency for other domestic purposes",
+      title = "Water sufficiency for other domestic purposes",
       subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
       x = "Percentage of Households",
       y = NULL
@@ -1083,7 +1083,7 @@ indicator_1.3 <- tryCatch({
     data = problem_results,
     x_var = estimate_pct,
     y_var = problem_label,
-    title = "Indicator 1.3: Water Access Problems",
+    title = "Water Access Problems",
     subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nAll responses shown (multi-select allows overlaps)"),
     label_position = "outside"
   )
@@ -1132,7 +1132,7 @@ indicator_1.4 <- tryCatch({
     data = coping_results,
     x_var = estimate_pct,
     y_var = mechanism_label,
-    title = "Indicator 1.4: Water-Related Coping Mechanisms (Top 10)",
+    title = "Water-Related Coping Mechanisms (Top 10)",
     subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
     label_position = "outside"
   )
@@ -1204,7 +1204,7 @@ indicator_1.6 <- tryCatch({
       name = NULL
     ) +
     labs(
-      title = "Indicator 1.6: Time to Fetch Water (Round Trip)",
+      title = "Time to Fetch Water (Round Trip)",
       subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
       x = "Fetch Time Category",
       y = "Percentage of Households",
@@ -1287,7 +1287,7 @@ indicator_1.9 <- tryCatch({
               color = "white", fontface = "bold", size = 3) +
     scale_fill_identity() +
     labs(
-      title = "Indicator 1.9: Free Residual Chlorine (FRC) Levels",
+      title = "Free Residual Chlorine (FRC) Levels",
       subtitle = glue("Overall Tawila-wide estimate (n={sum(results_1.9$n_unweighted)} households tested)\nTarget range (0.2-1.0 mg/l): {round(pct_in_target)}%"),
       x = "Percentage of Households",
       y = NULL,
@@ -1321,7 +1321,7 @@ indicator_1.9 <- tryCatch({
     xlim(c(0, 4)) +
     scale_fill_identity() +
     labs(
-      title = "Indicator 1.9: Free Residual Chlorine (FRC) Levels",
+      title = "Free Residual Chlorine (FRC) Levels",
       subtitle = glue("Overall Tawila-wide estimate (n={sum(results_1.9$n_unweighted)} households tested)")
     ) +
     theme_void() +
@@ -1418,7 +1418,7 @@ indicator_2.1 <- tryCatch({
     data = facility_results,
     x_var = estimate_pct,
     y_var = facility_label,
-    title = "Indicator 2.1: Sanitation Facility Type",
+    title = "Sanitation Facility Type",
     subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
     label_position = "outside"
   )
@@ -1488,7 +1488,7 @@ indicator_2.2 <- tryCatch({
       "11-20 households" = "#e36159",
       ">20 households" = "#e36159"
     )) +
-    labs(title = "Indicator 2.2: Sanitation Facility Sharing",
+    labs(title = "Sanitation Facility Sharing",
          subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nSphere standard: max 1 toilet per 20 people"),
          x = "Percentage of Households",
          y = NULL) +
@@ -1549,7 +1549,7 @@ indicator_2.3 <- tryCatch({
     data = problem_results,
     x_var = estimate_pct,
     y_var = problem_label,
-    title = "Indicator 2.3: Sanitation Problems",
+    title = "Sanitation Problems",
     subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nAll responses shown - percentages may sum >100%"),
     label_position = "outside"
   )
@@ -1598,7 +1598,7 @@ indicator_2.4 <- tryCatch({
     data = coping_results,
     x_var = estimate_pct,
     y_var = coping_label,
-    title = "Indicator 2.4: Sanitation Coping Mechanisms",
+    title = "Sanitation Coping Mechanisms",
     subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
     label_position = "outside"
   )
@@ -1646,7 +1646,7 @@ indicator_2.5 <- tryCatch({
     geom_text(aes(label = sprintf("%d%%", unsafe_pct)),
               vjust = -0.5, size = 4) +
     scale_fill_manual(values = c("Female" = "#e36159", "Male" = "#e36159")) +
-    labs(title = "Indicator 2.5: Feeling Unsafe at Sanitation Facilities",
+    labs(title = "Feeling Unsafe at Sanitation Facilities",
          subtitle = glue("By respondent gender (n={nrow(wash_data)} households)"),
          x = "Respondent Gender",
          y = "Percentage Reporting Feeling Unsafe") +
@@ -1706,7 +1706,7 @@ indicator_2.6a <- tryCatch({
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
               hjust = -0.2, size = 4) +
-    labs(title = "Indicator 2.6a: Observed Open Defecation",
+    labs(title = "Observed Open Defecation",
          subtitle = glue("Overall prevalence (n={nrow(wash_data)} households)"),
          x = "Percentage of Households",
          y = NULL) +
@@ -1768,7 +1768,7 @@ indicator_2.6b <- tryCatch({
     data = who_results,
     x_var = estimate_pct,
     y_var = age_label,
-    title = "Indicator 2.6b: Who Was Observed Practicing Open Defecation",
+    title = "Who Was Observed Practicing Open Defecation",
     subtitle = glue("By age group (n={nrow(wash_data)} households)\nAll responses shown - percentages may sum >100%"),
     label_position = "outside"
   )
@@ -1814,7 +1814,7 @@ indicator_2.6c <- tryCatch({
     data = when_results,
     x_var = estimate_pct,
     y_var = time_label,
-    title = "Indicator 2.6c: When Was Open Defecation Observed",
+    title = "When Was Open Defecation Observed",
     subtitle = glue("By time of day (n={nrow(wash_data)} households)\nAll responses shown - percentages may sum >100%"),
     label_position = "outside"
   )
@@ -1870,7 +1870,7 @@ indicator_2.7 <- tryCatch({
               hjust = -0.2, size = 3.5) +
     scale_fill_identity() +
     labs(
-      title = "Indicator 2.7: Children <5 Defecation Practices",
+      title = "Children <5 Defecation Practices",
       subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
       x = "Percentage of Households",
       y = NULL
@@ -1933,7 +1933,7 @@ indicator_2.8 <- tryCatch({
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
               hjust = -0.2, size = 4) +
-    labs(title = "Indicator 2.8: Damaged/Non-functional Latrines",
+    labs(title = "Damaged/Non-functional Latrines",
          subtitle = glue("Last 30 days (n={nrow(wash_data)} households)"),
          x = "Percentage of Households",
          y = NULL) +
@@ -2007,7 +2007,7 @@ indicator_2.9 <- tryCatch({
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
               hjust = -0.2, size = 4) +
-    labs(title = "Indicator 2.9: Visible Human Feces Near Accommodation",
+    labs(title = "Visible Human Feces Near Accommodation",
          subtitle = glue("Last 30 days (n={nrow(wash_data)} households) | Any visible: {any_visible_pct}%"),
          x = "Percentage of Households",
          y = NULL) +
@@ -2069,7 +2069,7 @@ indicator_3.0 <- tryCatch({
     data = waste_results,
     x_var = estimate_pct,
     y_var = disposal_label,
-    title = "Indicator 3.0: Solid Waste Disposal Methods",
+    title = "Solid Waste Disposal Methods",
     subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
     label_position = "outside"
   )
@@ -2164,7 +2164,7 @@ indicator_4.1 <- tryCatch({
     data = problem_results,
     x_var = estimate_pct,
     y_var = problem_label,
-    title = "Indicator 4.1: Hygiene NFI Problems",
+    title = "Hygiene NFI Problems",
     subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nAll responses shown - percentages may sum >100%"),
     label_position = "outside"
   )
@@ -2214,7 +2214,7 @@ indicator_4.2 <- tryCatch({
     data = coping_results,
     x_var = estimate_pct,
     y_var = coping_label,
-    title = "Indicator 4.2: Hygiene NFI Coping Mechanisms",
+    title = "Hygiene NFI Coping Mechanisms",
     subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
     label_position = "outside"
   )
@@ -2278,7 +2278,7 @@ indicator_4.3 <- tryCatch({
     scale_fill_manual(values = setNames(rev(fill_colors), rev(unique(results_4.3$category_label))),
                       name = "Spending Range") +
     labs(
-      title = "Indicator 4.3: Hygiene Spending (Past 30 Days)",
+      title = "Hygiene Spending (Past 30 Days)",
       subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nCategorical ranges in Sudanese Pounds (SDG)"),
       x = "Percentage of Households",
       y = NULL
@@ -2310,7 +2310,7 @@ indicator_4.3 <- tryCatch({
     xlim(c(0, 4)) +
     scale_fill_identity() +
     labs(
-      title = "Indicator 4.3: Hygiene Spending (Past 30 Days)",
+      title = "Hygiene Spending (Past 30 Days)",
       subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)")
     ) +
     theme_void() +
@@ -2377,7 +2377,7 @@ indicator_4.5 <- tryCatch({
               color = "white", fontface = "bold", size = 3) +
     scale_fill_manual(values = likert_colors, name = "Satisfaction Level") +
     labs(
-      title = "Indicator 4.5: Satisfaction with Hygiene NFI Access",
+      title = "Satisfaction with Hygiene NFI Access",
       subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
       x = "Percentage of Households",
       y = NULL
@@ -2409,7 +2409,7 @@ indicator_4.5 <- tryCatch({
     xlim(c(0, 4)) +
     scale_fill_identity() +
     labs(
-      title = "Indicator 4.5: Satisfaction with Hygiene NFI Access",
+      title = "Satisfaction with Hygiene NFI Access",
       subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)")
     ) +
     theme_void() +
@@ -2462,7 +2462,7 @@ indicator_4.6 <- tryCatch({
     data = results_device,
     x_var = estimate_pct,
     y_var = device_label,
-    title = "Indicator 4.6: Handwashing Device Type",
+    title = "Handwashing Device Type",
     subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
     label_position = "outside"
   )
@@ -2564,7 +2564,7 @@ indicator_4.9.1 <- tryCatch({
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
               hjust = -0.2, size = 4) +
-    labs(title = "Indicator 4.9.1: Soap at Home",
+    labs(title = "Soap at Home",
          subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nDo you have enough soap at household for all purposes?"),
          x = "Percentage of Households",
          y = NULL) +
@@ -2640,7 +2640,7 @@ indicator_4.9.2 <- tryCatch({
     data = barrier_results,
     x_var = estimate_pct,
     y_var = barrier_label,
-    title = "Indicator 4.9.2: Barriers to Soap Access",
+    title = "Barriers to Soap Access",
     subtitle = glue("Among households WITHOUT sufficient soap (n={nrow(no_soap_data)} households)\nMulti-select question - percentages may sum >100%"),
     label_position = "outside"
   )
@@ -2729,7 +2729,7 @@ indicator_4.11 <- tryCatch({
                   width = 0.2, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%% (n=%d)", estimate_pct, n_unweighted)),
               hjust = -0.1, size = 3.5) +
-    labs(title = "Indicator 4.11: Menstrual Material Sufficiency",
+    labs(title = "Menstrual Material Sufficiency",
          subtitle = glue("% with enough materials, by respondent age group (Tawila-wide)\nNote: respondent age used as proxy for menstruating individual"),
          x = "Percentage with Sufficient Materials",
          y = "Age Group") +
@@ -2833,7 +2833,7 @@ indicator_7.1 <- tryCatch({
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
               hjust = -0.2, size = 3.5) +
-    labs(title = "Indicator 7.1: Main WASH Priority Concerns",
+    labs(title = "Main WASH Priority Concerns",
          subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nSingle-select: biggest WASH concern for the household"),
          x = "Percentage of Households",
          y = NULL) +
@@ -2897,7 +2897,7 @@ indicator_7.2 <- tryCatch({
                   width = 0.3, linewidth = 0.5, color = "#888888") +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)),
               hjust = -0.2, size = 3.5) +
-    labs(title = "Indicator 7.2: Preferred WASH Interventions",
+    labs(title = "Preferred WASH Interventions",
          subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)\nMulti-select question - percentages may sum >100%"),
          x = "Percentage of Households",
          y = NULL) +
@@ -3037,7 +3037,7 @@ indicator_1 <- tryCatch({
     geom_col(fill = "#009999", width = 0.7) +
     geom_text(aes(label = sprintf("%d%%", estimate_pct)), hjust = -0.2, size = 3.5) +
     labs(
-      title = "Indicator 1: Camp Distribution",
+      title = "Camp Distribution",
       subtitle = glue("n = {sum(results_1$n_unweighted)} households"),
       x = "Percentage of Households",
       y = NULL
@@ -3087,7 +3087,7 @@ indicator_2 <- tryCatch({
     data = plot_data,
     x_var = estimate_pct,
     y_var = gender,
-    title = "Indicator 2: Gender of Survey Respondent",
+    title = "Gender of Survey Respondent",
     subtitle = glue("Female respondents: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
     fill_color = "#009999",
     x_limits = c(0, 100),
@@ -3121,7 +3121,7 @@ indicator_3a <- tryCatch({
     geom_vline(xintercept = age_stats$median_age, linetype = "dashed",
                color = "#e36159", linewidth = 0.8) +
     labs(
-      title = "Indicator 3a: Age Distribution of Household Heads",
+      title = "Age Distribution of Household Heads",
       subtitle = glue("Mean: {round(age_stats$mean_age)} years (95% CI: {round(age_stats$mean_age_low)}-{round(age_stats$mean_age_upp)}); Median: {round(age_stats$median_age)} years"),
       x = "Age (years)",
       y = "Number of Households"
@@ -3171,7 +3171,7 @@ indicator_3b <- tryCatch({
     data = plot_data,
     x_var = estimate_pct,
     y_var = gender,
-    title = "Indicator 3b: Gender of Household Head",
+    title = "Gender of Household Head",
     subtitle = glue("Female HoH: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
     fill_color = "#009999",
     x_limits = c(0, 100),
@@ -3209,7 +3209,7 @@ indicator_4 <- tryCatch({
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
-    title = "Indicator 4: Recent Arrivals (Within 2 Weeks)",
+    title = "Recent Arrivals (Within 2 Weeks)",
     subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
     fill_color = "#009999",
     x_limits = c(0, 100),
@@ -3247,7 +3247,7 @@ indicator_5 <- tryCatch({
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
-    title = "Indicator 5: Households with Children Under 5",
+    title = "Households with Children Under 5",
     subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
     fill_color = "#009999",
     x_limits = c(0, 100),
@@ -3285,7 +3285,7 @@ indicator_6 <- tryCatch({
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
-    title = "Indicator 6: Households with Elderly Members (60+)",
+    title = "Households with Elderly Members (60+)",
     subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
     fill_color = "#009999",
     x_limits = c(0, 100),
@@ -3323,7 +3323,7 @@ indicator_7 <- tryCatch({
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
-    title = "Indicator 7: Households with Disabled Members",
+    title = "Households with Disabled Members",
     subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
     fill_color = "#009999",
     x_limits = c(0, 100),
@@ -3361,7 +3361,7 @@ indicator_8 <- tryCatch({
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
-    title = "Indicator 8: Households with Pregnant/Lactating Women",
+    title = "Households with Pregnant/Lactating Women",
     subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
     fill_color = "#009999",
     x_limits = c(0, 100),
@@ -3399,7 +3399,7 @@ indicator_9 <- tryCatch({
     data = plot_data,
     x_var = estimate_pct,
     y_var = category,
-    title = "Indicator 9: Households with Children Receiving Malnutrition Treatment",
+    title = "Households with Children Receiving Malnutrition Treatment",
     subtitle = glue("Yes: n = {plot_data$n_unweighted}; Effective n = {round(plot_data$n_effective)}"),
     fill_color = "#009999",
     x_limits = c(0, 100),
