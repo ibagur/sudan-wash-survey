@@ -1191,31 +1191,7 @@ indicator_1.6 <- tryCatch({
     warning("Indicator 1.6: Categories sum to ", round(sum(fetch_results$estimate_pct), 1), "%, expected ~100%")
   }
 
-  plot_1.6 <- ggplot(fetch_results, aes(x = estimate_pct, y = "Fetch Time",
-                                        fill = category_label)) +
-    geom_col(position = "stack") +
-    geom_text(aes(label = sprintf("%d%%", estimate_pct)),
-              position = position_stack(vjust = 0.5),
-              color = "white", fontface = "bold", size = 3.5) +
-    scale_fill_manual(
-      values = c(GWC_TEAL_GRADIENT_5, "#e36159"),
-      name = "Time Category"
-    ) +
-    labs(
-      title = "Indicator 1.6: Time to Fetch Water (Round Trip)",
-      subtitle = glue("Overall Tawila-wide estimate (n={nrow(wash_data)} households)"),
-      x = "Percentage of Households",
-      y = NULL,
-      caption = "Red shading: Exceeds Sphere Standard (>30 minutes)"
-    ) +
-    scale_x_continuous(expand = c(0, 0)) +
-    theme_minimal(base_size = 12) +
-    theme(legend.position = "right")
-
-  ggsave(here("output", "plots", "water_indicator_1.6.png"),
-         plot = plot_1.6, width = 10, height = 4, dpi = 300, bg = "white")
-
-  # Create vertical bar chart (alternative visualization)
+  # Create vertical bar chart with error bars
   plot_1.6_bar <- ggplot(fetch_results, aes(x = reorder(category_label, category_order), y = estimate_pct)) +
     geom_col(aes(fill = exceeds_sphere), width = 0.7) +
     geom_errorbar(aes(ymin = ci_lower_pct, ymax = ci_upper_pct),
