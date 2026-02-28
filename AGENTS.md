@@ -674,6 +674,13 @@ Code style and patterns should align with the organizational standards establish
 Rscript wash_survey_analysis.R
 ```
 
+**Run container L/P/D artifact-filtered analysis:**
+```bash
+Rscript container_lpd_analysis.R
+```
+Inputs: `data/20260210_wash_survey_hh_container_level_PROCESSED.xlsx` (`container` sheet)  
+Outputs: `output/container_lpd_artifact_filtered_*.csv`
+
 **Check specific indicator:**
 ```r
 # Read processed household data
