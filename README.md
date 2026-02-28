@@ -188,5 +188,5 @@ library(patchwork)
 ## Contact
 
 Project Lead: [Your Name]
-Organization: UNHCR
+Organization: Global WASH Cluster
 Date: February 2026
