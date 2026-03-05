@@ -2,27 +2,22 @@
 # Household Container Water Capacity Analysis (Tidyverse)
 # ============================================================
 # Purpose:
-# This script reads the current `container` sheet from the workbook,
-# applies data-quality filters, calculates household total daily water
-# liters, derives liters-per-person-per-day (L/P/D), and produces
-# reusable outputs for reporting and QA.
+# Read the current `container` sheet, apply agreed data-quality filters,
+# calculate household water liters per person per day (L/P/D), and export
+# clear analysis outputs for reporting and QA.
 #
-# Core logic implemented:
-# 1) Read `container` data.
-# 2) Exclude rows where container volume > 1000 liters.
-# 3) Exclude rows where `frequency_filled` is a pure numeric literal
-#    that equals the same row's `volume_liters` (artifact pattern).
-# 4) Compute row-level daily liters: volume_liters * fill_level * frequency_filled_num.
-# 5) Aggregate row-level liters to household (`parent_index`).
-# 6) Compute household L/P/D = total_daily_liters / household_size.
-# 7) Keep subset with household total_daily_liters <= 100.
-# 8) Output summary metrics, standards buckets, camp breakdown, and audit table.
+# Agreed filtering logic:
+# 1) Exclude rows where container volume > 1000 liters.
+# 2) Exclude rows where `frequency_filled` is a pure numeric literal
+#    that equals the row's `volume_liters` (artifact pattern).
 #
-# Notes:
-# - This script uses the current `frequency_filled_num` as provided in
-#   the workbook (after your latest corrections/reconciliation).
-# - If `fill_level` is missing, it defaults to 1.
-# - If `frequency_filled_num` is missing, it defaults to 1.
+# Core calculation logic:
+# - Row daily liters = volume_liters * fill_level * frequency_filled_num
+# - Household total daily liters = sum(row daily liters) by parent_index
+# - Household L/P/D = total_daily_liters / household_size
+# - Reporting subset = households with total_daily_liters <= 100
+#
+# Inputs/outputs are project-relative for portability.
 # ============================================================
 
 # ------------------------------
@@ -40,27 +35,27 @@ suppressPackageStartupMessages({
 # ------------------------------
 # 2) User settings
 # ------------------------------
+# Run this script from project root:
+# sudan-wash-survey/
+
 input_file <- "data/20260210_wash_survey_hh_container_level_PROCESSED.xlsx"
 input_sheet <- "container"
 
-# Output folder for generated CSV files
 output_dir <- "output"
-
-# Prefix to keep outputs grouped together
 output_prefix <- "container_lpd_artifact_filtered"
 
 # ------------------------------
 # 3) Helper functions
 # ------------------------------
 
-# Convert Arabic-Indic digits to ASCII digits, preserving text structure.
+# Convert Arabic-Indic digits to ASCII digits.
 normalize_digits <- function(x) {
   x <- as.character(x)
   x[is.na(x)] <- NA_character_
   chartr("٠١٢٣٤٥٦٧٨٩", "0123456789", x)
 }
 
-# Return first mode (most common non-empty value) from a character vector.
+# Return first mode (most common non-empty value).
 first_mode <- function(x) {
   x <- as.character(x)
   x <- x[!is.na(x) & nzchar(x)]
@@ -78,49 +73,45 @@ lpd_bucket <- function(v) {
 }
 
 # ------------------------------
-# 4) Read source data
+# 4) Read data
 # ------------------------------
-# `clean_names()` standardizes names to snake_case for robust coding.
 container_raw <- read_excel(input_file, sheet = input_sheet) |>
   clean_names()
 
 # ------------------------------
-# 5) Prepare analysis fields and exclusion flags
+# 5) Build analysis base and exclusion flags
 # ------------------------------
 analysis_base <- container_raw |>
   mutate(
-    # Core numeric fields
+    # Numeric coercions used in calculations
     vol_l = suppressWarnings(as.numeric(volume_liters)),
     fill = suppressWarnings(as.numeric(fill_level)),
     people = suppressWarnings(as.numeric(total_no_of_people_in_hh)),
     freq_num = suppressWarnings(as.numeric(frequency_filled_num)),
 
-    # Frequency raw text normalized for artifact detection
+    # Parse raw frequency text for artifact detection rule
     freq_raw_norm = normalize_digits(frequency_filled) |> str_squish(),
     freq_raw_is_pure_num = str_detect(freq_raw_norm, "^\\d+(?:\\.\\d+)?$"),
     freq_raw_num = suppressWarnings(as.numeric(freq_raw_norm)),
 
-    # Artifact rule:
-    # if raw frequency literal equals volume literal in same row,
-    # treat row as corrupted frequency entry.
+    # Artifact: raw frequency literal equals row volume literal
     freq_equals_volume =
       freq_raw_is_pure_num &
       !is.na(freq_raw_num) &
       !is.na(vol_l) &
       abs(freq_raw_num - vol_l) < 1e-9,
 
-    # Outlier rule for container volume
+    # Outlier volume rule
     outlier_vol = !is.na(vol_l) & vol_l > 1000,
 
-    # Combined exclusion rule
+    # Combined exclusion
     exclude_row = outlier_vol | freq_equals_volume,
 
-    # Analysis defaults
+    # Safe defaults for calculations
     fill = ifelse(is.na(fill), 1, pmin(pmax(fill, 0), 1)),
     freq_num = ifelse(is.na(freq_num), 1, pmax(freq_num, 0))
   )
 
-# Keep only valid records for household calculations.
 analysis_rows <- analysis_base |>
   filter(
     !exclude_row,
@@ -128,12 +119,10 @@ analysis_rows <- analysis_base |>
     !is.na(vol_l),
     vol_l > 0
   ) |>
-  mutate(
-    daily_liters_record = vol_l * fill * freq_num
-  )
+  mutate(daily_liters_record = vol_l * fill * freq_num)
 
 # ------------------------------
-# 6) Aggregate to household level
+# 6) Aggregate to household
 # ------------------------------
 hh <- analysis_rows |>
   group_by(parent_index) |>
@@ -148,19 +137,15 @@ hh <- analysis_rows |>
     lpd = total_daily_liters / household_size
   )
 
-# All households with finite totals.
 hh_all <- hh |>
   filter(is.finite(total_daily_liters))
 
-# Requested analysis subset: households with <= 100 L/day total.
 hh_le100 <- hh |>
   filter(total_daily_liters <= 100, is.finite(lpd))
 
 # ------------------------------
-# 7) Build summary outputs
+# 7) Build reporting tables
 # ------------------------------
-
-# Main summary metrics.
 summary_metrics <- tibble(
   metric = c(
     "Total Households Analyzed",
@@ -196,7 +181,6 @@ summary_metrics <- tibble(
   )
 )
 
-# Humanitarian standards distribution (subset <= 100).
 std_levels <- c(
   "Below Emergency Minimum (< 7.5 L/P/D)",
   "Emergency Range (7.5-15 L/P/D)",
@@ -214,7 +198,6 @@ standards_breakdown <- hh_le100 |>
   ) |>
   select(level, households, percentage)
 
-# Camp-level L/P/D stats (subset <= 100).
 camp_order <- c("Camp A", "Camp B", "Camp C", "Camp D")
 
 camp_breakdown <- hh_le100 |>
@@ -234,7 +217,6 @@ camp_breakdown <- hh_le100 |>
     std_dev = ifelse(is.na(std_dev), 0, std_dev)
   )
 
-# Audit table documenting exactly what was excluded.
 analysis_audit <- tibble(
   metric = c(
     "rows_total_container",
@@ -260,7 +242,6 @@ analysis_audit <- tibble(
   )
 )
 
-# Optional detail table of excluded rows for QA.
 excluded_rows <- analysis_base |>
   filter(exclude_row) |>
   transmute(
@@ -281,7 +262,7 @@ excluded_rows <- analysis_base |>
   )
 
 # ------------------------------
-# 8) Write outputs
+# 8) Save outputs
 # ------------------------------
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -306,6 +287,4 @@ cat("Households total: ", nrow(hh_all), "\n", sep = "")
 cat("Households <=100 L/day: ", nrow(hh_le100), "\n", sep = "")
 cat(sprintf("Mean L/P/D (<=100 subset): %.6f\n", mean(hh_le100$lpd, na.rm = TRUE)))
 cat(sprintf("Median L/P/D (<=100 subset): %.6f\n", median(hh_le100$lpd, na.rm = TRUE)))
-
-cat("\nOutputs written to: ", output_dir, "\n", sep = "")
-cat("Prefix: ", output_prefix, "\n", sep = "")
+cat("Outputs written under: ", output_dir, "\n", sep = "")
